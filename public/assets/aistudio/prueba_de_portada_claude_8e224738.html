@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>BJ Beauty · Estética y Bienestar</title>
+<meta name="description" content="Diseño y laminado de cejas, manicura y pedicura. Tu belleza, nuestra pasión.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;700&family=Great+Vibes&family=Cormorant+Garamond:ital,wght@0,500;1,500&family=Montserrat:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#fdeef3;--bg2:#fff7fa;--card:#ffffffcc;--ink:#14101a;--muted:#5d4a57;
+  --pink:#e0407f;--pink-soft:#f9c9da;--gold:#b8923a;--gold2:#e3c77a;
+  box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#1a1218;--bg2:#241822;--card:#2d1f2acc;--ink:#fbeef4;--muted:#cdb3c1;
+  --pink:#ff6fa3;--pink-soft:#5a2a41;--gold:#e3c77a;--gold2:#b8923a;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#1a1218;--bg2:#241822;--card:#2d1f2acc;--ink:#fbeef4;--muted:#cdb3c1;--pink:#ff6fa3;--pink-soft:#5a2a41;--gold:#e3c77a;--gold2:#b8923a;color-scheme:dark}
+*{box-sizing:border-box;margin:0}
+html{scroll-behavior:smooth;scroll-padding-top:env(safe-area-inset-top,0px)}
+body{background:var(--bg);color:var(--ink);font-family:Montserrat,system-ui,sans-serif;line-height:1.6;overflow-x:hidden;
+  background-image:radial-gradient(circle at 10% 8%,var(--pink-soft) 0,transparent 38%),radial-gradient(circle at 92% 30%,var(--pink-soft) 0,transparent 34%),radial-gradient(circle at 15% 80%,var(--pink-soft) 0,transparent 36%)}
+.wrap{max-width:1040px;margin:auto;padding:0 20px}
+.gold-line{height:2px;background:linear-gradient(90deg,transparent,var(--gold),transparent);border:0}
+header{text-align:center;padding:56px 0 28px}
+.crown{width:84px;color:var(--gold)}
+.mono{font-family:'Playfair Display',serif;font-weight:700;font-size:clamp(84px,18vw,150px);line-height:1;letter-spacing:-4px;margin-top:-6px}
+.beauty{font-family:'Playfair Display',serif;letter-spacing:.5em;font-size:clamp(18px,4vw,28px);margin-right:-.5em}
+.script{font-family:'Great Vibes',cursive;font-size:clamp(34px,7vw,56px);color:var(--ink);margin-top:14px}
+.sub{letter-spacing:.3em;font-size:12px;text-transform:uppercase;color:var(--muted);margin-top:6px}
+.tag{font-family:'Cormorant Garamond',serif;font-style:italic;font-size:clamp(20px,4vw,28px);margin:22px 0 28px}
+.tag i{color:var(--pink);font-style:normal;margin:0 8px}
+.btn{display:inline-flex;align-items:center;gap:12px;background:linear-gradient(135deg,var(--pink-soft),var(--bg2));border:2px solid var(--gold2);color:var(--ink);text-decoration:none;font-family:'Playfair Display',serif;font-weight:700;font-size:clamp(22px,5vw,34px);padding:12px 30px;border-radius:999px;box-shadow:0 8px 28px #e0407f33;transition:transform .2s}
+.btn:hover{transform:translateY(-3px)}
+.btn svg{width:34px;height:34px}
+h2{font-family:'Playfair Display',serif;text-align:center;font-size:clamp(26px,5vw,38px);margin:56px 0 6px}
+.lead{text-align:center;color:var(--muted);margin-bottom:28px}
+.grid{display:grid;gap:18px;grid-template-columns:repeat(auto-fit,minmax(250px,1fr))}
+.card{background:var(--card);backdrop-filter:blur(6px);border:1px solid var(--gold2);border-radius:22px;padding:28px 22px;text-align:center}
+.ico{width:84px;height:84px;margin:0 auto 14px;border-radius:50%;background:radial-gradient(circle,var(--pink-soft),var(--bg2));border:2px solid var(--gold2);display:grid;place-items:center;color:var(--ink)}
+.ico svg{width:44px;height:44px}
+.card h3{font-family:'Playfair Display',serif;font-size:22px;margin-bottom:6px}
+.card p{color:var(--muted);font-size:14px}
+.quote{text-align:center;font-family:'Great Vibes',cursive;font-size:clamp(34px,7vw,54px);margin:56px 0 12px;line-height:1.15}
+.quote span{color:var(--pink)}
+.values{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));margin:32px 0 48px}
+.val{text-align:center;font-size:14px;padding:14px;border-left:1px solid var(--gold2)}
+.val:first-child{border-left:0}
+.val svg{width:34px;height:34px;color:var(--gold);display:block;margin:0 auto 6px}
+.cta{text-align:center;padding:24px 0 56px}
+footer{text-align:center;color:var(--muted);font-size:13px;padding:22px 0 32px;border-top:1px solid var(--gold2)}
+@media(max-width:600px){.val{border-left:0;border-top:1px solid var(--gold2)}.val:first-child{border-top:0}}
+</style>
+</head>
+<body>
+<header class="wrap">
+  <svg class="crown" viewBox="0 0 100 50" fill="currentColor" aria-hidden="true"><path d="M8 44 L14 14 L34 30 L50 6 L66 30 L86 14 L92 44 Z"/><circle cx="14" cy="12" r="4"/><circle cx="50" cy="4" r="4"/><circle cx="86" cy="12" r="4"/></svg>
+  <div class="mono">BJ</div>
+  <div class="beauty">BEAUTY</div>
+  <div class="script">Estética y Bienestar</div>
+  <p class="tag">Uñas <i>♥</i> Pedicura <i>♥</i> Diseño de Cejas</p>
+  <p class="sub">Tu belleza, nuestra pasión</p>
+  <div style="margin-top:28px"><a class="btn" href="https://wa.me/34611296406?text=Hola%2C%20quiero%20pedir%20cita%20en%20BJ%20Beauty" target="_blank" rel="noopener">
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm5.2 14.1c-.2.6-1.3 1.2-1.8 1.2-.5.1-1 .2-3.3-.7-2.8-1.2-4.600-4-4.700-4.200-.1-.2-1.100-1.500-1.100-2.800s.7-2 1-2.300c.2-.3.5-.3.700-.3h.5c.2 0 .4 0 .6.500l.9 2.100c.1.200.1.400 0 .600l-.4.600c-.1.200-.3.300-.1.600.2.300.8 1.300 1.700 2.100 1.100 1 2 1.300 2.300 1.400.3.100.4.100.6-.1l.8-1c.2-.3.400-.2.600-.1l2 1c.3.100.5.200.5.300.1.200.1.700-.1 1.400z"/></svg>
+    611 296 406</a></div>
+</header>
+
+<main class="wrap">
+  <hr class="gold-line">
+  <h2>Nuestros servicios</h2>
+  <p class="lead">Cuida tus detalles, realza tu belleza</p>
+  <div class="grid">
+    <article class="card"><div class="ico"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 18c8-8 28-8 36 0"/><path d="M8 30c10 8 22 8 32 0"/><path d="M14 33l-3 5M24 36v6M34 33l3 5"/></svg></div><h3>Diseño y Laminado de Cejas</h3><p>Mirada definida, cejas perfectas y duraderas, adaptadas a tu rostro.</p></article>
+    <article class="card"><div class="ico"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 42V14a4 4 0 0 1 8 0v14l8-4a4 4 0 0 1 3 7l-8 11"/></svg></div><h3>Manicura</h3><p>Acabados impecables: francesa, diseños y decoración personalizada.</p></article>
+    <article class="card"><div class="ico"><svg viewBox="0 0 48 48" fill="currentColor"><ellipse cx="22" cy="30" rx="9" ry="14"/><circle cx="13" cy="10" r="3"/><circle cx="21" cy="7" r="2.600"/><circle cx="28" cy="8" r="2.300"/><circle cx="34" cy="12" r="2"/></svg></div><h3>Pedicura</h3><p>Pies cuidados, suaves y con un esmaltado que enamora.</p></article>
+  </div>
+
+  <p class="quote">Cuida tus detalles,<br>realza tu <span>belleza</span> ♡</p>
+
+  <div class="values">
+    <div class="val"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2"><path d="M24 40c-10-2-16-8-16-16 6 0 11 2 16 8 5-6 10-8 16-8 0 8-6 14-16 16z"/><path d="M24 32V10"/></svg>Calidad en cada servicio</div>
+    <div class="val"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 8h24l8 10-20 24L4 18z"/><path d="M4 18h40M18 8l6 34 6-34"/></svg>Resultados que enamoran</div>
+    <div class="val"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2"><path d="M24 42S6 30 6 18a9 9 0 0 1 18-2 9 9 0 0 1 18 2c0 12-18 24-18 24z"/></svg>Tu belleza, nuestra prioridad</div>
+  </div>
+
+  <div class="cta">
+    <p class="script" style="margin:0 0 14px">Reserva tu cita</p>
+    <a class="btn" href="https://wa.me/34611296406?text=Hola%2C%20quiero%20pedir%20cita%20en%20BJ%20Beauty" target="_blank" rel="noopener">Escríbenos por WhatsApp</a>
+  </div>
+</main>
+
+<footer><div class="wrap">© 2026 BJ Beauty · Estética y Bienestar · WhatsApp 611 296 406</div></footer>
+</body>
+</html>

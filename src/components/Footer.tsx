@@ -1,53 +1,81 @@
-import React from 'react';
-import { IconHeartOutline } from './BeautyIcons';
+import React, { useEffect, useState } from 'react';
+import { Phone } from 'lucide-react';
+import { IconWhatsApp } from './BeautyIcons';
 import { BJLogo } from './BJLogo';
+import {
+  apiService,
+  CONFIG_UPDATED_EVENT,
+  formatPhoneDisplay,
+  normalizeWhatsAppDigits,
+} from '../data/api';
 
 export const Footer: React.FC = () => {
+  const [contactConfig, setContactConfig] = useState({
+    phone: '611296406',
+    whatsapp: '34611296406',
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadConfig = () => {
+      apiService.getConfig().then((cfg) => {
+        if (!cancelled && cfg && typeof cfg === 'object') {
+          setContactConfig({
+            phone: String(cfg.phone || '611296406'),
+            whatsapp: String(cfg.whatsapp || '34611296406'),
+          });
+        }
+      });
+    };
+    loadConfig();
+    window.addEventListener(CONFIG_UPDATED_EVENT, loadConfig);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(CONFIG_UPDATED_EVENT, loadConfig);
+    };
+  }, []);
+
+  const whatsappDigits = normalizeWhatsAppDigits(contactConfig.whatsapp, '34611296406');
+  const whatsappDisplay = formatPhoneDisplay(contactConfig.whatsapp, '611 296 406');
+  const directPhoneDigits =
+    String(contactConfig.phone || '611296406').replace(/[^\d+]/g, '') || '611296406';
+  const directPhoneDisplay = formatPhoneDisplay(contactConfig.phone, '611 296 406');
+
   return (
-    <footer className="bg-[#2B0F1E] text-[#FDEEF3] pt-14 pb-24 lg:pb-14 px-4 lg:px-12 border-t border-[#E0407F]/30">
-      <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-10 mb-10">
-        <div>
-          <div className="flex items-center gap-3 mb-5">
-            <BJLogo variant="compact" />
-          </div>
-          <p className="text-sm text-[#FDEEF3]/80 leading-relaxed">
-            Estética y bienestar. Tu belleza, nuestra pasión.
+    <footer className="border-t border-[#E3C77A] bg-[#FFF7FA]/85 text-[#5D4A57] pt-10 pb-24 lg:pb-10 px-4 lg:px-12">
+      <div className="max-w-5xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6 text-center md:text-left">
+        <div className="flex flex-col items-center md:items-start gap-1.5">
+          <BJLogo variant="compact" />
+          <p className="text-xs text-[#5D4A57]">
+            Estética y Bienestar · Diseño y laminado de cejas · Manicura · Pedicura
           </p>
         </div>
 
-        <div>
-          <h4 className="font-serif text-lg font-semibold text-[#E83E8C] mb-4">Servicios</h4>
-          <ul className="space-y-2 text-sm text-[#FDEEF3]/80">
-            <li>Diseño y laminado de cejas</li>
-            <li>Manicura</li>
-            <li>Pedicura</li>
-          </ul>
-        </div>
-
-        <div>
-          <h4 className="font-serif text-lg font-semibold text-[#E83E8C] mb-4">Contacto</h4>
+        <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-6">
           <a
-            href="https://wa.me/34611296406"
+            href={`tel:${directPhoneDigits}`}
+            className="inline-flex items-center gap-2 text-sm font-medium text-[#14101A] hover:text-[#E0407F] transition-colors whitespace-nowrap"
+          >
+            <Phone className="w-4 h-4 text-[#B8923A]" aria-hidden="true" />
+            <span>Directo:</span>
+            <span className="tabular-nums">{directPhoneDisplay}</span>
+          </a>
+
+          <a
+            href={`https://wa.me/${whatsappDigits}?text=Hola%2C%20quiero%20pedir%20cita%20en%20BJ%20Beauty`}
             target="_blank"
             rel="noreferrer"
-            className="inline-flex items-center gap-2.5 text-sm text-[#FDEEF3]/80 hover:text-[#F27AA8] transition-colors"
+            className="inline-flex items-center gap-2 text-sm font-medium text-[#14101A] hover:text-[#E0407F] transition-colors whitespace-nowrap"
           >
-            <span className="w-10 h-10 rounded-full bg-[#F6B8D0] flex items-center justify-center text-[#141414] shrink-0">
-              <IconHeartOutline className="w-5 h-5" />
-            </span>
-            <span className="font-sans">611 296 406</span>
+            <IconWhatsApp className="w-4 h-4 text-[#E0407F]" />
+            <span>Agente Virtual:</span>
+            <span className="tabular-nums">{whatsappDisplay}</span>
           </a>
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto pt-7 border-t border-[#FDEEF3]/10 flex flex-col sm:flex-row items-center justify-between text-xs text-[#FDEEF3]/60 gap-3">
-        <p>© 2026 BJ Beauty. Todos los derechos reservados.</p>
-        <p className="flex items-center gap-2 font-script text-sm">
-          <span className="w-8 h-8 rounded-full bg-[#F6B8D0] flex items-center justify-center text-[#141414]">
-            <IconHeartOutline className="w-4 h-4" />
-          </span>
-          Calidad en cada servicio · Resultados que enamoran.
-        </p>
+      <div className="max-w-5xl mx-auto mt-6 pt-5 border-t border-[#E3C77A]/40 text-center text-xs text-[#5D4A57]">
+        © 2026 BJ Beauty · Estética y Bienestar · Tu belleza, nuestra pasión
       </div>
     </footer>
   );

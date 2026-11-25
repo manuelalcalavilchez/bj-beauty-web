@@ -1,9 +1,33 @@
 import { ServiceItem, AddonItem, Specialist } from '../types';
 
 export const SERVICES: ServiceItem[] = [
-  { id: 's1', name: 'Diseño y Laminado de Cejas', category: 'cejas', durationMinutes: 45, price: 0, description: 'Diseño personalizado y laminado para unas cejas definidas y duraderas.' },
-  { id: 's2', name: 'Manicura', category: 'manicura', durationMinutes: 60, price: 0, description: 'Acabados impecables: francesa, diseños y decoración personalizada.' },
-  { id: 's3', name: 'Pedicura', category: 'pedicura', durationMinutes: 60, price: 0, description: 'Pies cuidados, suaves y con un esmaltado que enamora.' }
+  {
+    id: 's1',
+    name: 'Diseño y Laminado de Cejas',
+    category: 'cejas',
+    durationMinutes: 45,
+    durationEstimate: '45 min aprox.',
+    price: 0,
+    description: 'Diseño personalizado y laminado para unas cejas definidas y duraderas.'
+  },
+  {
+    id: 's2',
+    name: 'Manicura',
+    category: 'manicura',
+    durationMinutes: 60,
+    durationEstimate: '45 - 60 min aprox.',
+    price: 0,
+    description: 'Acabados impecables: francesa, diseños y decoración personalizada.'
+  },
+  {
+    id: 's3',
+    name: 'Pedicura',
+    category: 'pedicura',
+    durationMinutes: 60,
+    durationEstimate: '60 min aprox.',
+    price: 0,
+    description: 'Pies cuidados, suaves y con un esmaltado que enamora.'
+  }
 ];
 
 export const ADDONS: AddonItem[] = [];

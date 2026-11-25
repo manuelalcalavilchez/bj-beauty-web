@@ -5,6 +5,7 @@ export interface ServiceItem {
   name: string;
   category: ServiceCategory;
   durationMinutes: number;
+  durationEstimate?: string;
   price: number;
   description: string;
 }

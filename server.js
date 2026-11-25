@@ -1,6 +1,5 @@
 import 'dotenv/config';
 import express from 'express';
-import sqlite3 from 'sqlite3';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
@@ -13,7 +12,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = Number(process.env.PORT || process.env.API_PORT || 3003);
+const PORT = Number(process.env.PORT || process.env.API_PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
 
 // Middleware
@@ -21,12 +20,13 @@ app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 
-// SQLite Database
-const dbPath = path.join(__dirname, 'data', 'bjbeauty.db');
-const db = new sqlite3.Database(dbPath, (err) => {
-  if (err) console.error('Database error:', err);
-  else console.log(`S& SQLite conectado: ${dbPath}`);
-});
+// In-memory store (mocked — data resets on restart; provision Cloud SQL for persistence)
+const memTables = new Map();
+const getTable = (name) => {
+  if (!memTables.has(name)) memTables.set(name, []);
+  return memTables.get(name);
+};
+console.log('[AI Studio] Base de datos en memoria inicializada (sqlite3 mock activo)');
 
 // ==================== EMAIL (nodemailer) ====================
 const TEMPLATES_DIR = path.join(__dirname, 'templates');
@@ -80,34 +80,208 @@ const sendEmail = async ({ to, subject, templateName, vars }) => {
   }
 };
 
-// Promisify db methods
-const dbRun = (sql, params = []) => new Promise((resolve, reject) => {
-  db.run(sql, params, function(err) {
-    if (err) reject(err);
-    else resolve(this);
-  });
-});
-
-const dbGet = (sql, params = []) => new Promise((resolve, reject) => {
-  db.get(sql, params, (err, row) => {
-    if (err) reject(err);
-    else resolve(row);
-  });
-});
-
-const dbAll = (sql, params = []) => new Promise((resolve, reject) => {
-  db.all(sql, params, (err, rows) => {
-    if (err) reject(err);
-    else resolve(rows || []);
-  });
-});
-
-const ensureColumn = async (table, column, definition) => {
-  const columns = await dbAll(`PRAGMA table_info(${table})`);
-  if (!columns.some(c => c.name === column)) {
-    await dbRun(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+// In-memory SQL helpers (replaces sqlite3 native addon)
+const splitTopLevel = (str) => {
+  const parts = [];
+  let cur = '';
+  let depth = 0;
+  let inQuote = false;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i];
+    if (ch === "'" && str[i - 1] !== '\\') inQuote = !inQuote;
+    else if (!inQuote && ch === '(') depth++;
+    else if (!inQuote && ch === ')') depth--;
+    else if (!inQuote && depth === 0 && ch === ',') {
+      parts.push(cur.trim());
+      cur = '';
+      continue;
+    }
+    cur += ch;
   }
+  if (cur.trim()) parts.push(cur.trim());
+  return parts;
 };
+
+const resolveToken = (token, params, cursor) => {
+  const t = token.trim();
+  if (t === '?') return params[cursor.i++];
+  if (/^NULL$/i.test(t)) return null;
+  if (/^'.*'$/.test(t)) return t.slice(1, -1).replace(/''/g, "'");
+  if (/^-?\d+(\.\d+)?$/.test(t)) return Number(t);
+  return t;
+};
+
+const matchWhere = (row, whereClause, params, cursor) => {
+  if (!whereClause) return true;
+  const parts = whereClause.split(/\s+AND\s+/i);
+  for (const cond of parts) {
+    const c = cond.trim();
+    let m;
+    if ((m = /^UPPER\((\w+)\)\s*=\s*(.+)$/i.exec(c))) {
+      const val = resolveToken(m[2], params, cursor);
+      if (String(row[m[1]] ?? '').toUpperCase() !== String(val ?? '').toUpperCase()) return false;
+    } else if ((m = /^(\w+)\s*!=\s*(.+)$/.exec(c))) {
+      const val = resolveToken(m[2], params, cursor);
+      if (row[m[1]] == val) return false;
+    } else if ((m = /^(\w+)\s*=\s*(.+)$/.exec(c))) {
+      const val = resolveToken(m[2], params, cursor);
+      if (row[m[1]] != val) return false;
+    } else if ((m = /^(\w+)\s+LIKE\s+(.+)$/i.exec(c))) {
+      const val = String(resolveToken(m[2], params, cursor) ?? '');
+      const rx = new RegExp('^' + val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*').replace(/_/g, '.') + '$', 'i');
+      if (!rx.test(String(row[m[1]] ?? ''))) return false;
+    } else if ((m = /^(\w+)\s+IN\s*\((.+)\)$/i.exec(c))) {
+      const items = splitTopLevel(m[2]).map(tok => resolveToken(tok, params, cursor));
+      if (!items.includes(row[m[1]])) return false;
+    }
+  }
+  return true;
+};
+
+const filterRows = (rows, whereClause, params, cursor) => {
+  if (!whereClause) return [...rows];
+  // Evaluate parameter positions once by binding whereClause tokens first
+  const boundTokens = [];
+  const tempCursor = { i: cursor.i };
+  const parts = whereClause.split(/\s+AND\s+/i);
+  for (const cond of parts) {
+    const c = cond.trim();
+    const qMatches = c.match(/\?/g) || [];
+    for (let k = 0; k < qMatches.length; k++) {
+      boundTokens.push(params[tempCursor.i++]);
+    }
+  }
+  cursor.i = tempCursor.i;
+  return rows.filter(row => matchWhere(row, whereClause, boundTokens, { i: 0 }));
+};
+
+const sortRows = (rows, orderClause) => {
+  if (!orderClause) return rows;
+  const specs = orderClause.split(',').map(s => {
+    const [col, dir] = s.trim().split(/\s+/);
+    return { col, desc: /^DESC$/i.test(dir || '') };
+  });
+  return [...rows].sort((a, b) => {
+    for (const { col, desc } of specs) {
+      const va = a[col] ?? '';
+      const vb = b[col] ?? '';
+      if (va < vb) return desc ? 1 : -1;
+      if (va > vb) return desc ? -1 : 1;
+    }
+    return 0;
+  });
+};
+
+const dbRun = async (sql, params = []) => {
+  const s = sql.replace(/\s+/g, ' ').trim();
+  const cursor = { i: 0 };
+
+  let m;
+  if ((m = /^CREATE TABLE IF NOT EXISTS\s+([^\s(]+)/i.exec(s))) {
+    getTable(m[1]);
+    return { changes: 0 };
+  }
+  if (/^CREATE INDEX IF NOT EXISTS/i.test(s) || /^ALTER TABLE/i.test(s)) {
+    return { changes: 0 };
+  }
+  if ((m = /^INSERT(?:\s+OR\s+(IGNORE))?\s+INTO\s+([^\s(]+)\s*\(([^)]+)\)\s*VALUES\s*\((.+?)\)(?:\s+ON\s+CONFLICT\s*\(([^)]+)\)\s*DO\s+UPDATE\s+SET\s+(.+))?$/i.exec(s))) {
+    const isIgnore = Boolean(m[1]);
+    const table = getTable(m[2]);
+    const cols = splitTopLevel(m[3]);
+    const vals = splitTopLevel(m[4]).map(tok => resolveToken(tok, params, cursor));
+    const row = {};
+    cols.forEach((col, idx) => { row[col] = vals[idx]; });
+
+    const conflictCol = m[5]?.trim();
+    const updateSet = m[6]?.trim();
+
+    if (conflictCol) {
+      const existing = table.find(r => r[conflictCol] === row[conflictCol]);
+      if (existing) {
+        for (const assign of splitTopLevel(updateSet)) {
+          const am = /^(\w+)\s*=\s*(.+)$/.exec(assign);
+          if (!am) continue;
+          const targetCol = am[1];
+          const expr = am[2].trim();
+          if (expr.startsWith('excluded.')) {
+            existing[targetCol] = row[expr.slice('excluded.'.length)];
+          } else {
+            existing[targetCol] = resolveToken(expr, params, cursor);
+          }
+        }
+        return { changes: 1 };
+      }
+    } else if (isIgnore) {
+      const keyCol = row.id !== undefined ? 'id' : (row.key !== undefined ? 'key' : null);
+      if (keyCol && table.some(r => r[keyCol] === row[keyCol])) {
+        return { changes: 0 };
+      }
+    }
+    table.push(row);
+    return { changes: 1 };
+  }
+  if ((m = /^UPDATE\s+([^\s]+)\s+SET\s+(.+?)(?:\s+WHERE\s+(.+))?$/i.exec(s))) {
+    const table = getTable(m[1]);
+    const assignments = splitTopLevel(m[2]).map(assign => {
+      const am = /^(\w+)\s*=\s*(.+)$/.exec(assign);
+      return { col: am[1], val: resolveToken(am[2], params, cursor) };
+    });
+    const matched = filterRows(table, m[3], params, cursor);
+    for (const row of matched) {
+      for (const { col, val } of assignments) row[col] = val;
+    }
+    return { changes: matched.length };
+  }
+  if ((m = /^DELETE\s+FROM\s+([^\s]+)(?:\s+WHERE\s+(.+))?$/i.exec(s))) {
+    const table = getTable(m[1]);
+    const matched = filterRows(table, m[2], params, cursor);
+    const keep = table.filter(r => !matched.includes(r));
+    memTables.set(m[1], keep);
+    return { changes: matched.length };
+  }
+  return { changes: 0 };
+};
+
+const dbAll = async (sql, params = []) => {
+  const s = sql.replace(/\s+/g, ' ').trim();
+  const cursor = { i: 0 };
+
+  let m;
+  if ((m = /^PRAGMA table_info\(([^)]+)\)/i.exec(s))) {
+    return [];
+  }
+  if ((m = /^SELECT\s+COUNT\(\*\)\s+AS\s+(\w+)\s+FROM\s+([^\s]+)(?:\s+WHERE\s+(.+?))?$/i.exec(s))) {
+    const table = getTable(m[2]);
+    const matched = filterRows(table, m[3], params, cursor);
+    return [{ [m[1]]: matched.length }];
+  }
+  if ((m = /^SELECT\s+MAX\((\w+)\)\s+as\s+(\w+)\s+FROM\s+([^\s]+)$/i.exec(s))) {
+    const table = getTable(m[3]);
+    const maxVal = table.reduce((acc, r) => Math.max(acc, Number(r[m[1]] || 0)), 0);
+    return [{ [m[2]]: maxVal }];
+  }
+  if ((m = /^SELECT\s+(.+?)\s+FROM\s+([^\s]+)(?:\s+WHERE\s+(.+?))?(?:\s+ORDER BY\s+(.+?))?$/i.exec(s))) {
+    const fieldsRaw = m[1].trim();
+    const table = getTable(m[2]);
+    const matched = filterRows(table, m[3], params, cursor);
+    const sorted = sortRows(matched, m[4]);
+    if (fieldsRaw === '*') return sorted.map(r => ({ ...r }));
+    const fields = splitTopLevel(fieldsRaw);
+    return sorted.map(r => {
+      const out = {};
+      for (const f of fields) out[f] = r[f];
+      return out;
+    });
+  }
+  return [];
+};
+
+const dbGet = async (sql, params = []) => {
+  const rows = await dbAll(sql, params);
+  return rows[0];
+};
+
+const ensureColumn = async () => {};
 
 // ==================== SEGURIDAD STAFF ====================
 // Autenticacion de la Cabina Staff validada en servidor. El PIN nunca viaja al bundle del frontend.
@@ -393,6 +567,7 @@ const initDatabase = async () => {
     await ensureColumn('services', 'featured', 'INTEGER DEFAULT 0');
     await ensureColumn('services', 'sortOrder', 'INTEGER DEFAULT 0');
     await ensureColumn('services', 'instagramSource', 'TEXT');
+    await ensureColumn('services', 'icon', 'TEXT');
     await ensureColumn('services', 'updatedAt', 'TEXT');
 
     // Tabla de especialistas
@@ -488,14 +663,14 @@ const initDatabase = async () => {
     const serviceCount = await dbGet('SELECT COUNT(*) AS c FROM services');
     if (Number(serviceCount?.c || 0) === 0) {
       const seedServices = [
-        ['diseno-laminado-cejas', 'Diseño y laminado de cejas', 'cejas', 'Diseño personalizado y laminado para unas cejas definidas y duraderas.', 1],
-        ['manicura', 'Manicura', 'manicura', 'Manicura con acabados impecables: francesa, diseños y decoración.', 2],
-        ['pedicura', 'Pedicura', 'pedicura', 'Pies cuidados, suaves y con un esmaltado que enamora.', 3]
+        ['diseno-laminado-cejas', 'Diseño y laminado de cejas', 'cejas', 'brows', 'Diseño personalizado y laminado para unas cejas definidas y duraderas.', 1],
+        ['manicura', 'Manicura', 'manicura', 'manicure', 'Manicura con acabados impecables: francesa, diseños y decoración.', 2],
+        ['pedicura', 'Pedicura', 'pedicura', 'pedicure', 'Pies cuidados, suaves y con un esmaltado que enamora.', 3]
       ];
-      for (const [id, name, category, description, sortOrder] of seedServices) {
+      for (const [id, name, category, icon, description, sortOrder] of seedServices) {
         await dbRun(
-          'INSERT INTO services (id, name, duration, price, description, shortDescription, category, featured, sortOrder, instagramSource, updatedAt, active) VALUES (?, ?, NULL, NULL, ?, ?, ?, 1, ?, ?, ?, 1)',
-          [id, name, description, description, category, sortOrder, '', new Date().toISOString()]
+          'INSERT INTO services (id, name, duration, price, description, shortDescription, category, icon, featured, sortOrder, instagramSource, updatedAt, active) VALUES (?, ?, NULL, NULL, ?, ?, ?, ?, 1, ?, ?, ?, 1)',
+          [id, name, description, description, category, icon, sortOrder, '', new Date().toISOString()]
         );
       }
     }
@@ -556,26 +731,48 @@ const initDatabase = async () => {
 /* ==================== CRM ==================== */
 app.get('/api/crm/customers', requireStaff, async (req, res) => {
   try {
-    // Importación idempotente: cada contacto histórico de citas crea una ficha si aún no existe.
-    const appointmentClients = await dbAll("SELECT clientName, clientPhone, clientEmail, MAX(createdAt) AS createdAt FROM appointments WHERE COALESCE(clientPhone,'') <> '' OR COALESCE(clientEmail,'') <> '' GROUP BY clientPhone, clientEmail");
-    for (const client of appointmentClients) {
-      const phone = String(client.clientPhone || '').trim();
-      const email = String(client.clientEmail || '').trim();
-      const existing = await dbGet("SELECT id FROM crm_customers WHERE (? <> '' AND phone = ?) OR (? <> '' AND LOWER(email) = LOWER(?)) LIMIT 1", [phone, phone, email, email]);
+    const appointments = getTable('appointments');
+    const customers = getTable('crm_customers');
+    for (const appt of appointments) {
+      const phone = String(appt.clientPhone || '').trim();
+      const email = String(appt.clientEmail || '').trim();
+      if (!phone && !email) continue;
+      const existing = customers.find(c =>
+        (phone && c.phone === phone) ||
+        (email && String(c.email || '').toLowerCase() === email.toLowerCase())
+      );
       if (!existing) {
         const id = 'legacy_' + crypto.createHash('sha256').update(phone || email).digest('hex').slice(0, 16);
         const now = new Date().toISOString();
-        await dbRun("INSERT OR IGNORE INTO crm_customers (id,name,phone,email,createdAt,updatedAt) VALUES (?,?,?,?,?,?)", [id, client.clientName || 'Cliente', phone, email, client.createdAt || now, now]);
+        customers.push({
+          id,
+          name: appt.clientName || 'Cliente',
+          phone,
+          email,
+          taxId: '',
+          address: '',
+          postalCode: '',
+          city: '',
+          notes: '',
+          createdAt: appt.createdAt || now,
+          updatedAt: now
+        });
       }
     }
-    const rows = await dbAll(`
-      SELECT c.*, COUNT(DISTINCT a.id) AS appointmentCount,
-        MAX(a.date) AS lastAppointment,
-        COALESCE(SUM(CASE WHEN a.status = 'Completada' THEN a.totalPrice ELSE 0 END), 0) AS completedSpend
-      FROM crm_customers c LEFT JOIN appointments a
-        ON (c.phone <> '' AND c.phone = a.clientPhone) OR (c.email <> '' AND LOWER(c.email) = LOWER(a.clientEmail))
-      GROUP BY c.id ORDER BY c.name COLLATE NOCASE
-    `);
+    const rows = customers.map(c => {
+      const matched = appointments.filter(a =>
+        (c.phone && c.phone === a.clientPhone) ||
+        (c.email && String(c.email).toLowerCase() === String(a.clientEmail || '').toLowerCase())
+      );
+      const dates = matched.map(a => a.date).filter(Boolean).sort();
+      const completedSpend = matched.reduce((sum, a) => sum + (a.status === 'Completada' ? Number(a.totalPrice || 0) : 0), 0);
+      return {
+        ...c,
+        appointmentCount: matched.length,
+        lastAppointment: dates.length ? dates[dates.length - 1] : null,
+        completedSpend
+      };
+    }).sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'es', { sensitivity: 'base' }));
     res.json(rows);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -768,7 +965,22 @@ app.post('/api/customer/appointments/:id/cancellation-requests', customerPortalR
 
 app.get('/api/cancellation-requests', requireStaff, async (req, res) => {
   try {
-    const rows = await dbAll("SELECT cr.*, a.date, a.time, a.status AS appointmentStatus FROM cancellation_requests cr LEFT JOIN appointments a ON a.id = cr.appointmentId ORDER BY CASE WHEN cr.status = 'Pendiente' THEN 0 ELSE 1 END, cr.createdAt DESC");
+    const requests = getTable('cancellation_requests');
+    const appointments = getTable('appointments');
+    const rows = requests.map(cr => {
+      const a = appointments.find(ap => ap.id === cr.appointmentId);
+      return {
+        ...cr,
+        date: a?.date ?? null,
+        time: a?.time ?? null,
+        appointmentStatus: a?.status ?? null
+      };
+    }).sort((a, b) => {
+      const pa = a.status === 'Pendiente' ? 0 : 1;
+      const pb = b.status === 'Pendiente' ? 0 : 1;
+      if (pa !== pb) return pa - pb;
+      return String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
+    });
     res.json(rows);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -922,8 +1134,8 @@ app.get('/api/integrations/n8n/catalog', n8nApiGuard, async (req, res) => {
   try {
     const services = (await dbAll('SELECT * FROM services WHERE active = 1 ORDER BY sortOrder ASC, name ASC')).map(s => ({ id: s.id, name: s.name, category: s.category || '', description: s.description || s.shortDescription || '', shortDescription: s.shortDescription || s.description || '', duration: s.duration == null ? null : Number(s.duration), durationMinutes: s.duration == null ? 0 : Number(s.duration), price: s.price == null ? null : Number(s.price) }));
     const specialists = (await dbAll('SELECT id, name, role FROM specialists WHERE active = 1')).filter(s => s.id !== 'any').map(s => ({ id: s.id, name: s.name, role: s.role || '' }));
-    const cfg = await dbGet("SELECT name, address, hours, workingHours FROM salón_config WHERE id = 'main'");
-    res.json({ success: true, salon: cfg ? { name: cfg.name, address: cfg.address, hours: cfg.hours, workingHours: parseJson(cfg.workingHours, []) } : null, currency: 'EUR', services, specialists });
+    const cfg = await dbGet("SELECT name, phone, whatsapp, address, hours, workingHours FROM salón_config WHERE id = 'main'");
+    res.json({ success: true, salon: cfg ? { name: cfg.name, phone: cfg.phone, whatsapp: cfg.whatsapp, address: cfg.address, hours: cfg.hours, workingHours: parseJson(cfg.workingHours, []) } : null, currency: 'EUR', services, specialists });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -1109,11 +1321,11 @@ app.get('/api/services', async (req, res) => {
 
 app.post('/api/services', requireStaff, async (req, res) => {
   try {
-    const { id, name, duration, price, description, shortDescription, longDescription, category, featured, sortOrder, instagramSource } = req.body;
+    const { id, name, duration, price, description, shortDescription, longDescription, category, icon, featured, sortOrder, instagramSource } = req.body;
     const now = new Date().toISOString();
     await dbRun(
-      'INSERT INTO services (id, name, duration, price, description, shortDescription, longDescription, category, featured, sortOrder, instagramSource, updatedAt, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)',
-      [id, name, duration ?? null, price ?? null, description || shortDescription || '', shortDescription || description || '', longDescription || '', category || 'diseno_personalizado', featured ? 1 : 0, Number(sortOrder) || 0, instagramSource || '@bjbeauty.nails', now]
+      'INSERT INTO services (id, name, duration, price, description, shortDescription, longDescription, category, icon, featured, sortOrder, instagramSource, updatedAt, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)',
+      [id, name, duration ?? null, price ?? null, description || shortDescription || '', shortDescription || description || '', longDescription || '', category || 'diseno_personalizado', icon || '', featured ? 1 : 0, Number(sortOrder) || 0, instagramSource || '@bjbeauty.nails', now]
     );
 
     res.json({ success: true, id });
@@ -1124,10 +1336,10 @@ app.post('/api/services', requireStaff, async (req, res) => {
 
 app.put('/api/services/:id', requireStaff, async (req, res) => {
   try {
-    const { name, duration, price, description, shortDescription, longDescription, category, featured, sortOrder, instagramSource } = req.body;
+    const { name, duration, price, description, shortDescription, longDescription, category, icon, featured, sortOrder, instagramSource } = req.body;
     await dbRun(
-      'UPDATE services SET name = ?, duration = ?, price = ?, description = ?, shortDescription = ?, longDescription = ?, category = ?, featured = ?, sortOrder = ?, instagramSource = ?, updatedAt = ? WHERE id = ?',
-      [name, duration ?? null, price ?? null, description || shortDescription || '', shortDescription || description || '', longDescription || '', category || 'diseno_personalizado', featured ? 1 : 0, Number(sortOrder) || 0, instagramSource || '', new Date().toISOString(), req.params.id]
+      'UPDATE services SET name = ?, duration = ?, price = ?, description = ?, shortDescription = ?, longDescription = ?, category = ?, icon = ?, featured = ?, sortOrder = ?, instagramSource = ?, updatedAt = ? WHERE id = ?',
+      [name, duration ?? null, price ?? null, description || shortDescription || '', shortDescription || description || '', longDescription || '', category || 'diseno_personalizado', icon || '', featured ? 1 : 0, Number(sortOrder) || 0, instagramSource || '', new Date().toISOString(), req.params.id]
     );
 
     res.json({ success: true });
@@ -1138,6 +1350,7 @@ app.put('/api/services/:id', requireStaff, async (req, res) => {
 
 app.delete('/api/services/:id', requireStaff, async (req, res) => {
   try {
+    await dbRun('UPDATE services SET active = 0 WHERE id = ?', [req.params.id]);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1375,9 +1588,9 @@ if (fs.existsSync(distPath)) {
 // Inicializar y escuchar
 initDatabase().then(() => {
   app.listen(PORT, HOST, () => {
-    console.log(`xa Servidor Express en puerto ${PORT}`);
-    console.log(`x API Base: http://localhost:${PORT}/api`);
-    console.log(`x Base de datos: ${dbPath}`);
+    console.log(`Servidor Express en http://${HOST}:${PORT}`);
+    console.log(`API Base: http://localhost:${PORT}/api`);
+    console.log('Base de datos: en memoria (sqlite3 mock activo)');
   });
 });
 

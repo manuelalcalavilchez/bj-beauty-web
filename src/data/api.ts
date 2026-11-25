@@ -5,6 +5,25 @@ const API_BASE = '/api';
 // El token lo emite el servidor tras validar el PIN (POST /api/staff/login).
 const STAFF_TOKEN_KEY = 'bjbeauty_staff_token';
 export const STAFF_UNAUTHORIZED_EVENT = 'bjbeauty:staff-unauthorized';
+export const CONFIG_UPDATED_EVENT = 'bjbeauty:config-updated';
+export const SERVICES_UPDATED_EVENT = 'bjbeauty:services-updated';
+
+export const normalizeWhatsAppDigits = (raw?: string, fallback = '34611296406'): string => {
+  const digits = String(raw || '').replace(/\D/g, '');
+  if (!digits) return fallback;
+  if (digits.length === 9 && /^[6789]/.test(digits)) return `34${digits}`;
+  return digits;
+};
+
+export const formatPhoneDisplay = (raw?: string, fallback = '611 296 406'): string => {
+  const digits = String(raw || '').replace(/\D/g, '');
+  if (!digits) return fallback;
+  const local = digits.startsWith('34') && digits.length === 11 ? digits.slice(2) : digits;
+  if (local.length === 9) {
+    return `${local.slice(0, 3)} ${local.slice(3, 6)} ${local.slice(6)}`;
+  }
+  return String(raw || '').trim() || fallback;
+};
 
 export const staffSession = {
   getToken: () => sessionStorage.getItem(STAFF_TOKEN_KEY) || '',
@@ -281,7 +300,11 @@ export const apiService = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config)
       });
-      return res.json();
+      const data = await res.json();
+      if (data?.success) {
+        window.dispatchEvent(new Event(CONFIG_UPDATED_EVENT));
+      }
+      return data;
     } catch (err) {
       console.error('Error updating config:', err);
       return { error: err };
@@ -306,7 +329,9 @@ export const apiService = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(service)
       });
-      return res.json();
+      const data = await res.json();
+      if (data?.success) window.dispatchEvent(new Event(SERVICES_UPDATED_EVENT));
+      return data;
     } catch (err) {
       console.error('Error creating service:', err);
       return { error: err };
@@ -320,7 +345,9 @@ export const apiService = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(service)
       });
-      return res.json();
+      const data = await res.json();
+      if (data?.success) window.dispatchEvent(new Event(SERVICES_UPDATED_EVENT));
+      return data;
     } catch (err) {
       console.error('Error updating service:', err);
       return { error: err };
@@ -332,7 +359,9 @@ export const apiService = {
       const res = await apiFetch(`${API_BASE}/services/${id}`, {
         method: 'DELETE'
       });
-      return res.json();
+      const data = await res.json();
+      if (data?.success) window.dispatchEvent(new Event(SERVICES_UPDATED_EVENT));
+      return data;
     } catch (err) {
       console.error('Error deleting service:', err);
       return { error: err };

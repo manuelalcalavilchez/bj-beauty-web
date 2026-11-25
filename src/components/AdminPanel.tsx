@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Users, Palette, CheckCircle2, Clock, XCircle, Phone, Sparkles, Filter, Plus, Eye, BookmarkPlus, Lock, LogOut, Settings, Image, FileText, Trash2, Edit2, Save, X, RotateCcw, Search, Receipt, Printer, UserPlus } from 'lucide-react';
+import { Calendar, Users, Palette, CheckCircle2, Clock, XCircle, Phone, Sparkles, Filter, Plus, Eye, BookmarkPlus, Lock, LogOut, Settings, Image, FileText, Trash2, Edit2, Save, X, RotateCcw, Search, Receipt, Printer, UserPlus, Upload } from 'lucide-react';
 import { Appointment, CustomDesign, NailCatalogStyle } from '../types';
 import { apiService, staffSession, STAFF_UNAUTHORIZED_EVENT } from '../data/api';
+import { BJLogo } from './BJLogo';
+import { LOGO_ICON_OPTIONS, SERVICE_ICON_OPTIONS, isCustomIconImage, renderBeautyIcon } from './BeautyIcons';
 
 // La autenticación Staff se valida en el servidor (POST /api/staff/login). Aquí solo se guarda el token de sesión.
 
@@ -112,7 +114,7 @@ const DEFAULT_CONFIG: SalonConfig = {
   address: '',
   hours: '',
   whatsapp: '34611296406',
-  logo: '/assets/logo.jpg',
+  logo: 'crown',
   coverPhoto: '',
   calendarPublic: true,
   workingHours: DEFAULT_WORKING_HOURS,
@@ -250,6 +252,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         const loaded: SalonConfig = {
           ...DEFAULT_CONFIG,
           ...config,
+          logo: !config.logo || config.logo === '/assets/logo.jpg' ? 'crown' : config.logo,
           calendarPublic: config.calendarPublic !== 0,
           workingHours: (() => { const configured = parseArray(config.workingHours); return configured.length ? configured : DEFAULT_WORKING_HOURS; })(),
           blockedSlots: parseArray(config.blockedSlots),
@@ -370,6 +373,32 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
+  const readIconFile = (file: File | undefined, onLoad: (dataUrl: string) => void) => {
+    if (!file) return;
+    if (file.size > 1500000) {
+      alert('La imagen del icono no debe superar 1,5 MB.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') onLoad(reader.result);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleQuickServiceIconChange = async (svc: any, nextIcon: string) => {
+    const updated = { ...svc, icon: nextIcon };
+    const saved = await apiService.updateService(svc.id, updated);
+    if (saved?.success) {
+      setServices(prev => prev.map(s => s.id === svc.id ? updated : s));
+      if (editingService?.id === svc.id) {
+        setEditingService(updated);
+      }
+    } else {
+      alert('No se pudo actualizar el icono del servicio.');
+    }
+  };
+
   const addService = async () => {
     const newService = {
       id: `s${Date.now()}`,
@@ -380,6 +409,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       shortDescription: '',
       longDescription: '',
       category: 'diseno_personalizado',
+      icon: 'sparkles',
       featured: false,
       sortOrder: services.length + 1,
       instagramSource: ''
@@ -662,14 +692,30 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div>
-                    <label className="block text-xs font-bold text-[#2B0F1E] mb-2 uppercase">Teléfono</label>
+                    <label className="block text-xs font-bold text-[#2B0F1E] mb-2 uppercase">Teléfono de contacto directo</label>
                     <input
                       type="tel"
                       value={editingConfig.phone}
                       onChange={(e) => setEditingConfig({...editingConfig, phone: e.target.value})}
+                      placeholder="611 296 406"
                       className="w-full px-4 py-3 border border-neutral-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#E0407F]"
                     />
+                    <p className="mt-1.5 text-[11px] text-neutral-500">Número directo del salón para llamadas o atención personal.</p>
                   </div>
+                  <div>
+                    <label className="block text-xs font-bold text-[#2B0F1E] mb-2 uppercase">WhatsApp del agente virtual</label>
+                    <input
+                      type="tel"
+                      value={editingConfig.whatsapp}
+                      onChange={(e) => setEditingConfig({...editingConfig, whatsapp: e.target.value})}
+                      placeholder="+34 611 296 406"
+                      className="w-full px-4 py-3 border border-neutral-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#E0407F]"
+                    />
+                    <p className="mt-1.5 text-[11px] text-neutral-500">Número conectado al agente virtual de WhatsApp para citas (incluye prefijo, ej. 34611296406).</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
                   <div>
                     <label className="block text-xs font-bold text-[#2B0F1E] mb-2 uppercase">Dirección</label>
                     <input
@@ -679,6 +725,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       className="w-full px-4 py-3 border border-neutral-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#E0407F]"
                     />
                   </div>
+                  <label className="flex items-center gap-3 rounded-xl border border-neutral-200 p-4 cursor-pointer md:mt-6">
+                    <input
+                      type="checkbox"
+                      checked={editingConfig.calendarPublic}
+                      onChange={(e) => setEditingConfig({...editingConfig, calendarPublic: e.target.checked})}
+                      className="w-5 h-5 accent-[#2B0F1E]"
+                    />
+                    <span>
+                      <span className="block text-xs font-bold text-[#2B0F1E] uppercase">Mostrar disponibilidad</span>
+                      <span className="block text-[11px] text-neutral-500">Permite que el calendario público muestre disponibilidad.</span>
+                    </span>
+                  </label>
                 </div>
 
                 <div>
@@ -697,31 +755,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     onChange={(e) => setEditingConfig({...editingConfig, hours: e.target.value})}
                     className="w-full px-4 py-3 border border-neutral-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#E0407F] min-h-20"
                   />
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <label className="block text-xs font-bold text-[#2B0F1E] mb-2 uppercase">WhatsApp</label>
-                    <input
-                      type="tel"
-                      value={editingConfig.whatsapp}
-                      onChange={(e) => setEditingConfig({...editingConfig, whatsapp: e.target.value})}
-                      placeholder="+34 600 000 000"
-                      className="w-full px-4 py-3 border border-neutral-300 rounded-xl"
-                    />
-                  </div>
-                  <label className="flex items-center gap-3 rounded-xl border border-neutral-200 p-4 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={editingConfig.calendarPublic}
-                      onChange={(e) => setEditingConfig({...editingConfig, calendarPublic: e.target.checked})}
-                      className="w-5 h-5 accent-[#2B0F1E]"
-                    />
-                    <span>
-                      <span className="block text-xs font-bold text-[#2B0F1E] uppercase">Mostrar disponibilidad</span>
-                      <span className="block text-[11px] text-neutral-500">Permite que el calendario público muestre disponibilidad.</span>
-                    </span>
-                  </label>
                 </div>
 
                 <div className="rounded-2xl border border-neutral-200 p-5 space-y-4">
@@ -836,7 +869,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         setSalonConfig(editingConfig);
                         alert('Configuración guardada en la base de datos.');
                       } else {
-      alert('No se pudo guardar la configuración.');
+                        alert('No se pudo guardar la configuración.');
                       }
                     }}
                     className="px-6 py-3 bg-[#2B0F1E] text-[#FDEEF3] text-xs font-bold uppercase rounded-xl hover:bg-[#A32A5F] transition-all flex items-center gap-2"
@@ -845,6 +878,162 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     <span>Guardar Configuración</span>
                   </button>
                 </div>
+              </div>
+            </div>
+
+            {/* ICONOS DEL LOGO Y DE LOS SERVICIOS */}
+            <div className="bg-white rounded-3xl border border-[#E0407F]/25 p-8 space-y-8">
+              <div>
+                <h2 className="font-display text-2xl font-bold text-[#2B0F1E]">Iconos de la Web (Logo y Servicios)</h2>
+                <p className="text-xs text-neutral-500 mt-1">
+                  Personaliza el emblema del logo principal y los iconos de cada servicio que ven las clientas en la portada.
+                </p>
+              </div>
+
+              {/* Selector de icono / imagen del Logo */}
+              <div className="grid grid-cols-1 lg:grid-cols-[240px_1fr] gap-6 items-center p-5 rounded-2xl bg-[#FFF7FA] border border-[#E3C77A]/60">
+                <div className="flex flex-col items-center justify-center p-4 bg-white rounded-2xl border border-[#E3C77A]/50">
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-neutral-400 mb-2">Vista previa Logo</span>
+                  <div className="scale-75 origin-center">
+                    <BJLogo variant="full" logoIcon={editingConfig.logo} />
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <label className="text-xs font-bold text-[#2B0F1E] uppercase">Emblema / Icono del Logo</label>
+                    <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#E3C77A] bg-white text-[11px] font-semibold text-[#2B0F1E] hover:bg-[#FDEEF3] cursor-pointer">
+                      <Upload className="w-3.5 h-3.5 text-[#E0407F]" />
+                      <span>Subir imagen propia</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => readIconFile(e.target.files?.[0], (url) => setEditingConfig({ ...editingConfig, logo: url }))}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                    {LOGO_ICON_OPTIONS.map((opt) => {
+                      const active = (editingConfig.logo || 'crown') === opt.id;
+                      return (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => setEditingConfig({ ...editingConfig, logo: opt.id })}
+                          className={`flex items-center gap-2.5 p-2.5 rounded-xl border text-left transition-all ${
+                            active
+                              ? 'border-[#E0407F] bg-[#FDEEF3] text-[#14101A] ring-1 ring-[#E0407F]'
+                              : 'border-neutral-200 bg-white text-neutral-700 hover:border-[#E3C77A]'
+                          }`}
+                        >
+                          <span className="w-8 h-8 rounded-full bg-[#FFF7FA] border border-[#E3C77A]/60 flex items-center justify-center text-[#B8923A] shrink-0">
+                            {renderBeautyIcon(opt.id, 'w-5 h-5')}
+                          </span>
+                          <span className="text-xs font-semibold truncate">{opt.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+                    {isCustomIconImage(editingConfig.logo) ? (
+                      <span className="text-[11px] text-[#A32A5F] font-semibold">Imagen personalizada seleccionada (pulsa «Guardar Logo» para aplicar).</span>
+                    ) : (
+                      <span className="text-[11px] text-neutral-500">Pulsa «Guardar Logo» para aplicarlo en la cabecera, portada y pie de página.</span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const payload = {
+                          ...editingConfig,
+                          primaryColor: editingConfig.colors.primary,
+                          accentColor: editingConfig.colors.accent,
+                          backgroundColor: editingConfig.colors.background
+                        };
+                        const saved = await apiService.updateConfig(payload);
+                        if (saved?.success) {
+                          setSalonConfig(editingConfig);
+                          alert('Icono del logo actualizado en toda la web.');
+                        } else {
+                          alert('No se pudo guardar el icono del logo.');
+                        }
+                      }}
+                      className="px-4 py-2 bg-[#2B0F1E] text-[#FDEEF3] text-xs font-bold uppercase rounded-xl hover:bg-[#A32A5F] transition-all flex items-center gap-1.5"
+                    >
+                      <Save className="w-3.5 h-3.5" />
+                      <span>Guardar Logo</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Selector rápido de iconos de servicios */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold text-[#2B0F1E] uppercase tracking-wider">Iconos de los Servicios</h3>
+                  <span className="text-[11px] text-neutral-500">Los cambios en servicios se aplican al instante</span>
+                </div>
+
+                {services.length === 0 ? (
+                  <p className="text-xs text-neutral-500">No hay servicios activos.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {services.map((svc) => {
+                      const currentIcon = svc.icon || '';
+                      return (
+                        <div key={svc.id} className="p-4 rounded-2xl border border-neutral-200 bg-neutral-50/50 space-y-3">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div className="flex items-center gap-3">
+                              <span className="w-11 h-11 rounded-full bg-[#F9C9DA]/60 border border-[#E3C77A] flex items-center justify-center text-[#14101A] overflow-hidden shrink-0">
+                                {renderBeautyIcon(currentIcon, 'w-6 h-6', svc.category)}
+                              </span>
+                              <div>
+                                <p className="text-sm font-bold text-[#14101A]">{svc.name}</p>
+                                <p className="text-[11px] text-neutral-500">Categoría: {svc.category || 'general'}</p>
+                              </div>
+                            </div>
+                            <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-300 bg-white text-[11px] font-semibold text-[#2B0F1E] hover:bg-[#FDEEF3] cursor-pointer">
+                              <Upload className="w-3.5 h-3.5 text-[#E0407F]" />
+                              <span>Subir icono propio</span>
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) => readIconFile(e.target.files?.[0], (url) => handleQuickServiceIconChange(svc, url))}
+                              />
+                            </label>
+                          </div>
+
+                          <div className="flex flex-wrap gap-1.5">
+                            {SERVICE_ICON_OPTIONS.map((opt) => {
+                              const isSelected = currentIcon === opt.id || (!currentIcon && renderBeautyIcon('', '', svc.category) && opt.id === (svc.category === 'manicura' ? 'manicure' : svc.category === 'pedicura' ? 'pedicure' : svc.category === 'cejas' ? 'brows' : 'sparkles'));
+                              return (
+                                <button
+                                  key={opt.id}
+                                  type="button"
+                                  title={opt.label}
+                                  onClick={() => handleQuickServiceIconChange(svc, opt.id)}
+                                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] font-medium transition-colors ${
+                                    isSelected
+                                      ? 'border-[#E0407F] bg-[#FDEEF3] text-[#14101A] font-semibold'
+                                      : 'border-neutral-200 bg-white text-neutral-600 hover:border-[#E3C77A]'
+                                  }`}
+                                >
+                                  <span className="w-4 h-4 flex items-center justify-center">
+                                    {renderBeautyIcon(opt.id, 'w-4 h-4')}
+                                  </span>
+                                  <span>{opt.label}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1067,7 +1256,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       <tr key={svc.id} className="hover:bg-neutral-50">
                         <td className="p-4">
                           {editingService?.id === svc.id ? (
-                            <div className="space-y-2 min-w-56">
+                            <div className="space-y-3 min-w-64">
                               <input
                                 type="text"
                                 value={editingService.name}
@@ -1082,9 +1271,49 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                 rows={3}
                                 className="px-3 py-2 border border-neutral-300 rounded-lg text-xs w-full min-w-56"
                               />
+                              <div className="p-2.5 rounded-xl bg-[#FFF7FA] border border-[#E3C77A]/60 space-y-2">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[11px] font-bold text-[#2B0F1E] uppercase">Icono del servicio</span>
+                                  <label className="inline-flex items-center gap-1 px-2 py-1 rounded border border-neutral-300 bg-white text-[10px] font-semibold cursor-pointer hover:bg-[#FDEEF3]">
+                                    <Upload className="w-3 h-3 text-[#E0407F]" />
+                                    <span>Subir imagen</span>
+                                    <input
+                                      type="file"
+                                      accept="image/*"
+                                      className="hidden"
+                                      onChange={(e) => readIconFile(e.target.files?.[0], (url) => setEditingService({ ...editingService, icon: url }))}
+                                    />
+                                  </label>
+                                </div>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {SERVICE_ICON_OPTIONS.map((opt) => {
+                                    const active = (editingService.icon || '') === opt.id;
+                                    return (
+                                      <button
+                                        key={opt.id}
+                                        type="button"
+                                        title={opt.label}
+                                        onClick={() => setEditingService({ ...editingService, icon: opt.id })}
+                                        className={`p-1.5 rounded-lg border transition-colors ${
+                                          active
+                                            ? 'border-[#E0407F] bg-[#FDEEF3] text-[#14101A]'
+                                            : 'border-neutral-200 bg-white text-neutral-600 hover:border-[#E3C77A]'
+                                        }`}
+                                      >
+                                        {renderBeautyIcon(opt.id, 'w-4 h-4')}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
                             </div>
                           ) : (
-                            <span className="font-semibold text-[#2B0F1E]">{svc.name}</span>
+                            <div className="flex items-center gap-3">
+                              <span className="w-9 h-9 rounded-full bg-[#F9C9DA]/60 border border-[#E3C77A] flex items-center justify-center text-[#14101A] overflow-hidden shrink-0">
+                                {renderBeautyIcon(svc.icon, 'w-5 h-5', svc.category)}
+                              </span>
+                              <span className="font-semibold text-[#2B0F1E]">{svc.name}</span>
+                            </div>
                           )}
                         </td>
                         <td className="p-4 text-center">

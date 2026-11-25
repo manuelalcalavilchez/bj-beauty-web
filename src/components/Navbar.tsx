@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Calendar, UserCheck, BookmarkCheck, Menu, X, Home } from 'lucide-react';
+import { Calendar, UserCheck, BookmarkCheck, Menu, X, Home, Sparkles } from 'lucide-react';
 import { BJLogo } from './BJLogo';
 
 interface NavbarProps {
@@ -32,35 +32,33 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, booking
   };
 
   return (
-    <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-md border-b border-[#E0407F]/35 px-4 lg:px-12 py-3.5 flex items-center justify-between shadow-xs">
+    <header className="sticky top-0 z-50 bg-[#FFF7FA]/90 backdrop-blur-md border-b border-[#E3C77A]/60 px-4 lg:px-12 py-3.5 flex items-center justify-between gap-8">
       <button
         onClick={() => handleNavClick('home')}
-        className="text-left group cursor-pointer focus:outline-none flex items-center gap-3"
+        className="text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#E0407F] rounded-md whitespace-nowrap shrink-0"
         aria-label="Ir al inicio"
       >
         <BJLogo variant="compact" />
       </button>
 
-      <nav aria-label="Navegación principal" className="hidden lg:flex items-center gap-4 text-xs uppercase tracking-wider font-bold text-[#141414]">
+      <nav aria-label="Navegación principal" className="hidden lg:flex items-center gap-7 text-xs uppercase tracking-wider font-semibold text-[#5D4A57]">
         {navItems.map((item) => {
-          const Icon = item.icon;
           const isActive = activeTab === item.id;
           return (
             <button
               key={item.id}
               onClick={() => handleNavClick(item.id)}
               aria-current={isActive ? 'page' : undefined}
-              className={`transition-all py-1.5 px-3 rounded-lg flex items-center gap-1.5 ${
+              className={`py-1.5 border-b-2 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
                 isActive
-                  ? 'bg-[#2B0F1E] text-white shadow-[0_4px_18px_rgba(232,62,140,.12)]'
-                  : 'hover:bg-[#E0407F]/15 text-[#2B0F1E]/80 hover:text-[#2B0F1E]'
+                  ? 'border-[#E0407F] text-[#14101A]'
+                  : 'border-transparent hover:border-[#E3C77A] hover:text-[#14101A]'
               }`}
             >
-              <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-[#E83E8C]' : 'text-[#E83E8C]'}`} />
               <span>{item.label}</span>
               {item.badge !== undefined && (
-                <span className="ml-1 w-4 h-4 rounded-full bg-[#E83E8C] text-[#141414] text-[10px] flex items-center justify-center font-bold">
-                  {item.badge}
+                <span className="text-[11px] font-bold text-[#E0407F] tabular-nums">
+                  ({item.badge})
                 </span>
               )}
             </button>
@@ -68,17 +66,17 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, booking
         })}
       </nav>
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 shrink-0">
         <button
           onClick={() => handleNavClick('booking')}
-          className="px-5 py-2.5 bg-[#E0407F] hover:bg-[#F27AA8] text-[#141414] text-xs font-bold uppercase tracking-widest rounded-lg shadow-[0_6px_20px_rgba(232,62,140,.18)] transition-all flex items-center gap-2 whitespace-nowrap"
+          className="px-5 py-2.5 bg-[#E0407F] hover:bg-[#C8326D] text-white text-xs font-semibold uppercase tracking-widest rounded-full shadow-[0_6px_20px_rgba(224,64,127,0.25)] transition-colors flex items-center gap-2 whitespace-nowrap shrink-0"
         >
           <Calendar className="w-4 h-4" />
           <span>Reservar Cita</span>
         </button>
         <button
           onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-          className="lg:hidden p-2 rounded-xl bg-[#2B0F1E] text-white focus:outline-none"
+          className="lg:hidden p-2.5 rounded-full border border-[#E3C77A] bg-white/80 text-[#14101A] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#E0407F]"
           aria-label={mobileMenuOpen ? 'Cerrar menú' : 'Abrir menú'}
           aria-expanded={mobileMenuOpen}
         >
@@ -87,7 +85,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, booking
       </div>
 
       {mobileMenuOpen && (
-        <div className="absolute top-full left-0 right-0 bg-[#FDEEF3] border-b border-[#E0407F]/30 shadow-2xl p-6 lg:hidden flex flex-col gap-3 animate-fadeIn">
+        <div className="absolute top-full left-0 right-0 bg-[#FFF7FA] border-b border-[#E3C77A] shadow-xl p-5 lg:hidden flex flex-col gap-2.5">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
@@ -95,18 +93,18 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, booking
               <button
                 key={item.id}
                 onClick={() => handleNavClick(item.id)}
-                className={`w-full py-3 px-4 rounded-xl text-left text-xs uppercase font-bold tracking-wider flex items-center justify-between transition-all ${
+                className={`w-full py-3 px-4 rounded-xl text-left text-xs uppercase font-semibold tracking-wider flex items-center justify-between transition-colors ${
                   isActive
-                    ? 'bg-[#2B0F1E] text-white'
-                    : 'bg-white text-[#141414] border border-neutral-200'
+                    ? 'bg-[#F9C9DA]/60 text-[#14101A] border border-[#E3C77A]'
+                    : 'bg-white/80 text-[#5D4A57] border border-[#E3C77A]/40 hover:text-[#14101A]'
                 }`}
               >
-                <div className="flex items-center gap-2.5">
-                  <Icon className="w-4 h-4 text-[#E83E8C]" />
+                <span className="flex items-center gap-2.5">
+                  <Icon className="w-4 h-4 text-[#E0407F]" />
                   <span>{item.label}</span>
-                </div>
+                </span>
                 {item.badge !== undefined && (
-                  <span className="w-5 h-5 rounded-full bg-[#E83E8C] text-[#141414] text-xs flex items-center justify-center font-bold">
+                  <span className="text-xs font-bold text-[#E0407F] tabular-nums">
                     {item.badge}
                   </span>
                 )}
@@ -118,5 +116,3 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, booking
     </header>
   );
 };
-
-const Sparkles = () => <span className="w-4 h-4" />;

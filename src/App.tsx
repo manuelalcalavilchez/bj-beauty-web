@@ -101,7 +101,7 @@ export default function App() {
   const activeBookingCount = appointments.filter(a => a.status === 'Confirmada').length;
 
   return (
-    <div className="min-h-screen bg-[#FDEEF3] text-[#2B0F1E] flex flex-col font-['Plus_Jakarta_Sans',sans-serif]">
+    <div className="min-h-screen bg-transparent text-[#14101A] flex flex-col font-sans">
       {/* Top Navbar */}
       <Navbar 
         activeTab={activeTab} 
