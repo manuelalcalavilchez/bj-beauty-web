@@ -142,7 +142,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [pinInput, setPinInput] = useState<string>('');
   const [pinError, setPinError] = useState<string>('');
   const [pinLoading, setPinLoading] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<'config' | 'contenidos' | 'galeria' | 'servicios' | 'especialistas' | 'agenda' | 'designs' | 'requests' | 'cancellations'>('config');
+  const [activeTab, setActiveTab] = useState<'config' | 'contenidos' | 'galeria' | 'servicios' | 'especialistas' | 'agenda' | 'designs' | 'requests' | 'cancellations' | 'crm'>('config');
   const [selectedTech, setSelectedTech] = useState<string>('all');
   const [selectedDesignModal, setSelectedDesignModal] = useState<CustomDesign | null>(null);
 

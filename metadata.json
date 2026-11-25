@@ -1,6 +1,4 @@
 {
   "name": "BJ Beauty",
-  "description": "BJ Beauty: estética y bienestar. Diseño y laminado de cejas, manicura, pedicura, reservas online y gestión de cabina.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "description": "BJ Beauty: estética y bienestar. Diseño y laminado de cejas, manicura, pedicura, reservas online y gestión de cabina."
 }

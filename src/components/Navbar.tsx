@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Calendar, UserCheck, BookmarkCheck, Menu, X, Home, Sparkles } from 'lucide-react';
+import { Calendar, UserCheck, BookmarkCheck, Menu, X, Home } from 'lucide-react';
 import { BJLogo } from './BJLogo';
 
 interface NavbarProps {
@@ -15,7 +15,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, booking
     { id: 'home', label: 'Inicio', icon: Home },
     { id: 'services', label: 'Servicios', icon: Sparkles },
     { id: 'mybookings', label: 'Mis Citas', badge: bookingCount > 0 ? bookingCount : undefined, icon: BookmarkCheck },
-    { id: 'admin', label: 'Cabina Staff', icon: UserCheck }
+    { id: 'admin', label: 'Cabina Staff', icon: UserCheck },
   ];
 
   const handleNavClick = (tabId: string) => {
@@ -38,10 +38,10 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, booking
         className="text-left group cursor-pointer focus:outline-none flex items-center gap-3"
         aria-label="Ir al inicio"
       >
-        <BJLogo size={45} className="group-hover:scale-105 transition-transform" />
+        <BJLogo variant="compact" />
       </button>
 
-      <nav aria-label="Navegación principal" className="hidden lg:flex items-center gap-4 text-xs uppercase tracking-wider font-bold text-[#2B0F1E]">
+      <nav aria-label="Navegación principal" className="hidden lg:flex items-center gap-4 text-xs uppercase tracking-wider font-bold text-[#141414]">
         {navItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
@@ -52,14 +52,14 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, booking
               aria-current={isActive ? 'page' : undefined}
               className={`transition-all py-1.5 px-3 rounded-lg flex items-center gap-1.5 ${
                 isActive
-                  ? 'bg-[#2B0F1E] text-white shadow-[0_4px_18px_rgba(224,64,127,.12)]'
+                  ? 'bg-[#2B0F1E] text-white shadow-[0_4px_18px_rgba(232,62,140,.12)]'
                   : 'hover:bg-[#E0407F]/15 text-[#2B0F1E]/80 hover:text-[#2B0F1E]'
               }`}
             >
-              <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-[#E0407F]' : 'text-[#E0407F]'}`} />
+              <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-[#E83E8C]' : 'text-[#E83E8C]'}`} />
               <span>{item.label}</span>
               {item.badge !== undefined && (
-                <span className="ml-1 w-4 h-4 rounded-full bg-[#E0407F] text-[#2B0F1E] text-[10px] flex items-center justify-center font-bold">
+                <span className="ml-1 w-4 h-4 rounded-full bg-[#E83E8C] text-[#141414] text-[10px] flex items-center justify-center font-bold">
                   {item.badge}
                 </span>
               )}
@@ -71,14 +71,14 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, booking
       <div className="flex items-center gap-3">
         <button
           onClick={() => handleNavClick('booking')}
-          className="px-5 py-2.5 bg-[#E0407F] hover:bg-[#F27AA8] text-[#2B0F1E] text-xs font-bold uppercase tracking-widest rounded-lg shadow-[0_6px_20px_rgba(224,64,127,.18)] transition-all flex items-center gap-2 whitespace-nowrap"
+          className="px-5 py-2.5 bg-[#E0407F] hover:bg-[#F27AA8] text-[#141414] text-xs font-bold uppercase tracking-widest rounded-lg shadow-[0_6px_20px_rgba(232,62,140,.18)] transition-all flex items-center gap-2 whitespace-nowrap"
         >
           <Calendar className="w-4 h-4" />
           <span>Reservar Cita</span>
         </button>
         <button
           onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-          className="lg:hidden p-2 rounded-xl bg-[#2B0F1E] text-[#FDEEF3] focus:outline-none"
+          className="lg:hidden p-2 rounded-xl bg-[#2B0F1E] text-white focus:outline-none"
           aria-label={mobileMenuOpen ? 'Cerrar menú' : 'Abrir menú'}
           aria-expanded={mobileMenuOpen}
         >
@@ -96,15 +96,17 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, booking
                 key={item.id}
                 onClick={() => handleNavClick(item.id)}
                 className={`w-full py-3 px-4 rounded-xl text-left text-xs uppercase font-bold tracking-wider flex items-center justify-between transition-all ${
-                  isActive ? 'bg-[#2B0F1E] text-[#FDEEF3]' : 'bg-white text-[#2B0F1E] border border-neutral-200'
+                  isActive
+                    ? 'bg-[#2B0F1E] text-white'
+                    : 'bg-white text-[#141414] border border-neutral-200'
                 }`}
               >
                 <div className="flex items-center gap-2.5">
-                  <Icon className="w-4 h-4 text-[#E0407F]" />
+                  <Icon className="w-4 h-4 text-[#E83E8C]" />
                   <span>{item.label}</span>
                 </div>
                 {item.badge !== undefined && (
-                  <span className="w-5 h-5 rounded-full bg-[#E0407F] text-[#2B0F1E] text-xs flex items-center justify-center font-bold">
+                  <span className="w-5 h-5 rounded-full bg-[#E83E8C] text-[#141414] text-xs flex items-center justify-center font-bold">
                     {item.badge}
                   </span>
                 )}
@@ -116,3 +118,5 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, booking
     </header>
   );
 };
+
+const Sparkles = () => <span className="w-4 h-4" />;
