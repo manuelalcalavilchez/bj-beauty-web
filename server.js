@@ -368,7 +368,7 @@ const initDatabase = async () => {
   try {
     // Migra el nombre histórico de la tabla, que se creó con texto mal codificado.
     // Conserva todas sus filas y evita crear una tabla nueva vacía en instalaciones existentes.
-    const legacySalonTableName = 'sal\\u00c3\\u00b3n_config';
+    const legacySalonTableName = 'sal\u00c3\u00b3n_config';
     const salonTableName = 'salón_config';
     const salonTables = await dbAll(
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (?, ?)",
