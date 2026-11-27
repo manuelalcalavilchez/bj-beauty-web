@@ -9,7 +9,7 @@ Proyecto derivado de la plantilla `las-greenlanters-nails` (Vite + React + Expre
 ```bash
 cp .env.example .env     # rellena SMTP y STAFF_PIN
 npm install
-npm run dev:full         # API (server.js) + web en http://localhost:3002
+npm run dev:full         # compila Vite e inicia Express (web + API) en http://localhost:3000
 ```
 
 ## Notas
