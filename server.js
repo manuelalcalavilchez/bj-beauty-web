@@ -669,7 +669,7 @@ const initDatabase = async () => {
     for (const { name: tableName } of userTables) {
       const quotedTable = '"' + String(tableName).replace(/"/g, '""') + '"';
       const columns = await dbAll('PRAGMA table_info(' + quotedTable + ')');
-      for (const column of columns.filter((item) => /TEXT/i.test(String(item.type || ''))) {
+      for (const column of columns.filter((item) => /TEXT/i.test(String(item.type || '')))) {
         const quotedColumn = '"' + String(column.name).replace(/"/g, '""') + '"';
         const rows = await dbAll(
           'SELECT rowid AS __rowid__, ' + quotedColumn + ' AS __value FROM ' + quotedTable +
