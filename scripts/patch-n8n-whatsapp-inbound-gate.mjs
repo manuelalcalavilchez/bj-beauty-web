@@ -24,7 +24,7 @@ if (!Array.isArray(workflow.nodes) || !workflow.connections) {
 const byName = (name) => workflow.nodes.find((node) => node.name === name);
 const webhook = byName('Webhook Evolution');
 const normalizer = byName('Normalizar mensaje');
-const contentFilter = byName('Solo mensajes de texto entrantes');
+const contentFilter = byName('Solo mensajes de texto entrantes') ?? byName('Solo mensajes con contenido válido');
 if (!webhook || !normalizer || !contentFilter) {
   throw new Error('Expected nodes not found: Webhook Evolution, Normalizar mensaje, Solo mensajes de texto entrantes');
 }
@@ -48,9 +48,9 @@ if (!gate) {
           },
           {
             id: 'gate-not-from-me',
-            leftValue: '={{ $json.body?.data?.key?.fromMe === true }}',
+            leftValue: '={{ $json.body?.data?.key?.fromMe === false }}',
             rightValue: '',
-            operator: { type: 'boolean', operation: 'false', singleValue: true }
+            operator: { type: 'boolean', operation: 'true', singleValue: true }
           },
           {
             id: 'gate-not-group-or-broadcast',
@@ -112,15 +112,6 @@ workflow.connections[webhook.name] = {
 workflow.connections[gate.name] = {
   main: [[{ node: normalizer.name, type: 'main', index: 0 }]]
 };
-
-// Keep the downstream content filter connection, updating its source key.
-if (workflow.connections['Normalizar mensaje']) {
-  workflow.connections['Normalizar mensaje'].main?.forEach((branch) => {
-    for (const edge of branch) {
-      if (edge.node === 'Solo mensajes de texto entrantes') edge.node = contentFilter.name;
-    }
-  });
-}
 
 const names = new Set(workflow.nodes.map((node) => node.name));
 const ids = workflow.nodes.map((node) => node.id);
