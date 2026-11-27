@@ -29,6 +29,7 @@ if (!webhook || !normalizer || !contentFilter) {
   throw new Error('Expected nodes not found: Webhook Evolution, Normalizar mensaje, Solo mensajes de texto entrantes');
 }
 
+const oldContentFilterName = contentFilter.name;
 const gateName = 'Validar evento entrante (antes del número)';
 const gateId = 'c4f0c6e1-3d31-4fd9-9b36-2f7c0c4e19a1';
 let gate = byName(gateName);
@@ -92,6 +93,16 @@ const oldContentCondition = contentFilter.parameters?.conditions?.conditions?.fi
 if (!oldContentCondition) throw new Error('Could not locate the existing content filter condition');
 oldContentCondition.leftValue = '={{ $json.contenidoValido }}';
 contentFilter.name = 'Solo mensajes con contenido válido';
+if (oldContentFilterName !== contentFilter.name) {
+  const downstream = workflow.connections[oldContentFilterName];
+  delete workflow.connections[oldContentFilterName];
+  if (downstream) workflow.connections[contentFilter.name] = downstream;
+  for (const connection of Object.values(workflow.connections)) {
+    for (const branch of connection.main || []) {
+      for (const edge of branch) if (edge.node === oldContentFilterName) edge.node = contentFilter.name;
+    }
+  }
+}
 
 // Rewire webhook -> gate -> normalizer. The filter drops fromMe, group,
 // broadcast and non-upsert events before the phone-number Set expressions run.
