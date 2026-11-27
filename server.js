@@ -366,6 +366,23 @@ app.put('/api/content', requireStaff, async (req, res) => {
 // Crear tablas al iniciar
 const initDatabase = async () => {
   try {
+    // Migra el nombre histórico de la tabla, que se creó con texto mal codificado.
+    // Conserva todas sus filas y evita crear una tabla nueva vacía en instalaciones existentes.
+    const legacySalonTableName = 'sal\\u00c3\\u00b3n_config';
+    const salonTableName = 'salón_config';
+    const salonTables = await dbAll(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (?, ?)",
+      [legacySalonTableName, salonTableName]
+    );
+    const hasLegacySalonTable = salonTables.some((table) => table.name === legacySalonTableName);
+    const hasCorrectSalonTable = salonTables.some((table) => table.name === salonTableName);
+    if (hasLegacySalonTable && hasCorrectSalonTable) {
+      throw new Error('Existen las tablas antigua y nueva de configuración del salón. Se detiene el arranque para evitar pérdida de datos.');
+    }
+    if (hasLegacySalonTable) {
+      await dbRun('ALTER TABLE "' + legacySalonTableName + '" RENAME TO "' + salonTableName + '"');
+      console.log('Migrada la tabla de configuración del salón a su nombre UTF-8 correcto.');
+    }
     // Tabla de citas
     await dbRun(`
       CREATE TABLE IF NOT EXISTS appointments (
