@@ -685,6 +685,7 @@ const initDatabase = async () => {
     console.log('Base de datos inicializada correctamente');
   } catch (err) {
     console.error('Error inicializando BD:', err);
+    throw err;
   }
 };
 
