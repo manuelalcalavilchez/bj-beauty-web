@@ -146,7 +146,9 @@ export const apiService = {
   async getAppointments() {
     try {
       const res = await apiFetch(`${API_BASE}/appointments`);
-      return res.json();
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
     } catch (err) {
       console.error('Error fetching appointments:', err);
       return [];
@@ -235,7 +237,9 @@ export const apiService = {
   async getDesigns() {
     try {
       const res = await apiFetch(`${API_BASE}/designs`);
-      return res.json();
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
     } catch (err) {
       console.error('Error fetching designs:', err);
       return [];
