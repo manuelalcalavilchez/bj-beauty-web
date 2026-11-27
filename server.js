@@ -991,6 +991,7 @@ const n8nSetStatus = async (req, res, targetStatus) => {
     if (!current || !n8nOwns(current, req)) return res.status(404).json({ error: 'Cita no encontrada' });
     if (targetStatus === 'Completada' && !isPastAppointment(current)) return res.status(409).json({ error: 'No se puede completar una cita futura' });
     if (targetStatus === 'Confirmada' && current.status === 'Completada') return res.status(409).json({ error: 'Una cita completada no puede volver a Confirmada' });
+    if (targetStatus === 'Confirmada' && current.status === 'Cancelada') return res.status(409).json({ error: 'Una cita cancelada no puede reactivarse mediante esta accion' });
     if (targetStatus === 'Cancelada' && current.status === 'Completada') return res.status(409).json({ error: 'Una cita completada no puede cancelarse mediante esta accion' });
     if (targetStatus === 'Completada' && current.status === 'Cancelada') return res.status(409).json({ error: 'Una cita cancelada no puede completarse' });
     if (current.status === targetStatus) return res.json({ success: true, action: targetStatus, alreadySet: true, appointment: serializeAppointment(current) });
