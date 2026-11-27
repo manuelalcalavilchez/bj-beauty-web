@@ -30,6 +30,18 @@ const dbGet = (sql, params = []) => new Promise((resolve, reject) => { db.get(sq
 const dbAll = (sql, params = []) => new Promise((resolve, reject) => { db.all(sql, params, (err, rows) => { if (err) reject(err); else resolve(rows || []); }); });
 const ensureColumn = async (table, column, definition) => { const columns = await dbAll('PRAGMA table_info(' + table + ')'); if (!columns.some(c => c.name === column)) await dbRun('ALTER TABLE ' + table + ' ADD COLUMN ' + column + ' ' + definition); };
 
+const repairMojibake = (value) => {
+  const replacements = [
+    ['Ã¡', 'á'], ['Ã©', 'é'], ['Ã­', 'í'], ['Ã³', 'ó'], ['Ãº', 'ú'],
+    ['Ã±', 'ñ'], ['Ã‰', 'É'], ['Ã“', 'Ó'], ['Ãš', 'Ú'],
+    ['Â·', '·'], ['Â¿', '¿'], ['Â¡', '¡'],
+    ['â€™', '’'], ['â€œ', '“'], ['â€', '”']
+  ];
+  let repaired = String(value);
+  for (const [broken, correct] of replacements) repaired = repaired.split(broken).join(correct);
+  return repaired;
+};
+
 // ==================== EMAIL (nodemailer) ====================
 const TEMPLATES_DIR = path.join(__dirname, 'templates');
 
@@ -645,6 +657,30 @@ const initDatabase = async () => {
         ]
       );
     }
+
+    // Repara textos históricos almacenados con UTF-8 interpretado como Latin-1/Windows-1252.
+    // Solo recorre columnas TEXT y actualiza filas cuyo contenido realmente cambia.
+    const userTables = await dbAll("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'");
+    let repairedTextValues = 0;
+    for (const { name: tableName } of userTables) {
+      const quotedTable = '"' + String(tableName).replace(/"/g, '""') + '"';
+      const columns = await dbAll('PRAGMA table_info(' + quotedTable + ')');
+      for (const column of columns.filter((item) => /TEXT/i.test(String(item.type || ''))) {
+        const quotedColumn = '"' + String(column.name).replace(/"/g, '""') + '"';
+        const rows = await dbAll(
+          'SELECT rowid AS __rowid__, ' + quotedColumn + ' AS __value FROM ' + quotedTable +
+          ' WHERE typeof(' + quotedColumn + ") = 'text' AND (" + quotedColumn + " LIKE '%Ã%' OR " + quotedColumn + " LIKE '%Â%' OR " + quotedColumn + " LIKE '%â%')"
+        );
+        for (const row of rows) {
+          const repaired = repairMojibake(row.__value);
+          if (repaired !== row.__value) {
+            await dbRun('UPDATE ' + quotedTable + ' SET ' + quotedColumn + ' = ? WHERE rowid = ?', [repaired, row.__rowid__]);
+            repairedTextValues += 1;
+          }
+        }
+      }
+    }
+    if (repairedTextValues) console.log('Textos históricos corregidos:', repairedTextValues);
 
     console.log('Base de datos inicializada correctamente');
   } catch (err) {
