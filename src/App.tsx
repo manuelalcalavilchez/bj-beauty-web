@@ -20,8 +20,6 @@ export default function App() {
   // Citas y diseños: persistidos en SQLite a través de la API (server.js)
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [customDesigns, setCustomDesigns] = useState<CustomDesign[]>([]);
-  const [isLoadingData, setIsLoadingData] = useState<boolean>(true);
-
   const [catalogStyles, setCatalogStyles] = useState<NailCatalogStyle[]>(() => {
     const saved = localStorage.getItem('bjbeauty_catalog_styles');
     if (saved) {
@@ -38,22 +36,7 @@ export default function App() {
     return [];
   });
 
-  // Carga inicial de citas y diseños desde la base de datos (API -> server.js -> SQLite)
-  useEffect(() => {
-    let cancelled = false;
-    const loadData = async () => {
-      const [appts, designs] = await Promise.all([
-        apiService.getAppointments(),
-        apiService.getDesigns()
-      ]);
-      if (cancelled) return;
-      setAppointments(Array.isArray(appts) ? appts : []);
-      setCustomDesigns(Array.isArray(designs) ? designs : []);
-      setIsLoadingData(false);
-    };
-    loadData();
-    return () => { cancelled = true; };
-  }, []);
+  // Los datos privados se cargan desde AdminPanel solo después de validar la sesión Staff.
 
   useEffect(() => {
     localStorage.setItem('bjbeauty_catalog_styles', JSON.stringify(catalogStyles));

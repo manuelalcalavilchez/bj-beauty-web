@@ -226,7 +226,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setIsLoadingData(true);
     try {
       const [config, apiServices, apiSpecialists, gallery, requests, apiAppointments, apiDesigns, content, cancellations, customers, invoices] = await Promise.all([
-        apiService.getConfig(),
+        apiService.getStaffConfig(),
         apiService.getServices(),
         apiService.getSpecialists(),
         apiService.getGallery(),

@@ -146,7 +146,9 @@ export const apiService = {
   async getAppointments() {
     try {
       const res = await apiFetch(`${API_BASE}/appointments`);
-      return res.json();
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
     } catch (err) {
       console.error('Error fetching appointments:', err);
       return [];
@@ -235,7 +237,9 @@ export const apiService = {
   async getDesigns() {
     try {
       const res = await apiFetch(`${API_BASE}/designs`);
-      return res.json();
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
     } catch (err) {
       console.error('Error fetching designs:', err);
       return [];
@@ -286,9 +290,19 @@ export const apiService = {
   async getConfig() {
     try {
       const res = await apiFetch(`${API_BASE}/config`);
-      return res.json();
+      return res.ok ? await res.json() : {};
     } catch (err) {
-      console.error('Error fetching config:', err);
+      console.error('Error fetching public config:', err);
+      return {};
+    }
+  },
+
+  async getStaffConfig() {
+    try {
+      const res = await apiFetch(`${API_BASE}/staff/config`);
+      return res.ok ? await res.json() : {};
+    } catch (err) {
+      console.error('Error fetching Staff config:', err);
       return {};
     }
   },

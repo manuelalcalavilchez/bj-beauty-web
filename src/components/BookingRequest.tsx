@@ -57,6 +57,8 @@ export const BookingRequest: React.FC<BookingRequestProps> = ({ setActiveTab }) 
         body: JSON.stringify({
           ...formData,
           serviceType: services.find(service => service.id === formData.serviceType)?.name || '',
+          privacyAccepted: true,
+          privacyPolicyVersion: '2026-11-27',
           createdAt: new Date().toISOString()
         })
       });

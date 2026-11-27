@@ -30,6 +30,18 @@ const dbGet = (sql, params = []) => new Promise((resolve, reject) => { db.get(sq
 const dbAll = (sql, params = []) => new Promise((resolve, reject) => { db.all(sql, params, (err, rows) => { if (err) reject(err); else resolve(rows || []); }); });
 const ensureColumn = async (table, column, definition) => { const columns = await dbAll('PRAGMA table_info(' + table + ')'); if (!columns.some(c => c.name === column)) await dbRun('ALTER TABLE ' + table + ' ADD COLUMN ' + column + ' ' + definition); };
 
+const repairMojibake = (value) => {
+  const replacements = [
+    ['Ã¡', 'á'], ['Ã©', 'é'], ['Ã­', 'í'], ['Ã³', 'ó'], ['Ãº', 'ú'],
+    ['Ã±', 'ñ'], ['Ã‰', 'É'], ['Ã“', 'Ó'], ['Ãš', 'Ú'],
+    ['Â·', '·'], ['Â¿', '¿'], ['Â¡', '¡'],
+    ['â€™', '’'], ['â€œ', '“'], ['â€', '”']
+  ];
+  let repaired = String(value);
+  for (const [broken, correct] of replacements) repaired = repaired.split(broken).join(correct);
+  return repaired;
+};
+
 // ==================== EMAIL (nodemailer) ====================
 const TEMPLATES_DIR = path.join(__dirname, 'templates');
 
@@ -49,12 +61,17 @@ if (process.env.SMTP_USER && process.env.SMTP_PASS) {
   console.warn('a?  SMTP no configurado en .env (SMTP_USER/SMTP_PASS). Los emails solo se mostrarn en consola.');
 }
 
-// Sustituye {{variable}} en la plantilla HTML por su valor
+// Escapa valores dinámicos antes de insertarlos en plantillas HTML de correo.
+const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+})[char]);
+
+// Sustituye {{variable}} en la plantilla HTML por su valor escapado.
 const renderTemplate = (templateName, vars = {}) => {
   const templatePath = path.join(TEMPLATES_DIR, templateName);
   let html = fs.readFileSync(templatePath, 'utf-8');
   for (const [key, value] of Object.entries(vars)) {
-    html = html.replaceAll(`{{${key}}}`, value === undefined || value === null ? '' : String(value));
+    html = html.replaceAll(`{{${key}}}`, escapeHtml(value));
   }
   return html;
 };
@@ -235,6 +252,9 @@ setInterval(() => {
   for (const [ip, a] of staffLoginAttempts) {
     if ((a.lockedUntil || 0) < now && now - a.firstAt > LOGIN_WINDOW_MS) staffLoginAttempts.delete(ip);
   }
+  for (const [ip, a] of bookingRequestAttempts) {
+    if (now - a.startedAt > 30 * 60 * 1000) bookingRequestAttempts.delete(ip);
+  }
 }, 10 * 60 * 1000).unref();
 
 app.post('/api/staff/login', async (req, res) => {
@@ -248,7 +268,7 @@ app.post('/api/staff/login', async (req, res) => {
   if (attempt.lockedUntil > now) {
     const retryAfter = Math.ceil((attempt.lockedUntil - now) / 1000);
     res.set('Retry-After', String(retryAfter));
-    return res.status(429).json({ error: 'Demasiados intentos. Prueba mÃ¡s tarde.', retryAfter });
+    return res.status(429).json({ error: 'Demasiados intentos. Prueba más tarde.', retryAfter });
   }
 
   const pin = typeof req.body?.pin === 'string' ? req.body.pin : '';
@@ -276,23 +296,23 @@ app.post('/api/staff/logout', requireStaff, (req, res) => {
 // ==================== CONTENIDOS DE LA WEB ====================
 // Textos editables desde Staff > Contenidos. Los valores por defecto reproducen la portada actual.
 const SITE_CONTENT_DEFAULTS = {
-  hero_kicker: 'BJ Beauty Â· EstÃ©tica y Bienestar',
+  hero_kicker: 'BJ Beauty · Estética y Bienestar',
   hero_title: 'Tu belleza,',
-  hero_title_highlight: 'nuestra pasiÃ³n.',
-  hero_subtitle: 'DiseÃ±o y laminado de cejas Â· Manicura Â· Pedicura. Cuida tus detalles, realza tu belleza.',
+  hero_title_highlight: 'nuestra pasión.',
+  hero_subtitle: 'Diseño y laminado de cejas · Manicura · Pedicura. Cuida tus detalles, realza tu belleza.',
   hero_cta_booking: 'Solicitar cita',
   hero_cta_instagram: 'WhatsApp 611 296 406',
   services_kicker: 'Servicios',
   services_title: 'Cuida tus detalles',
   services_intro: 'Cejas, manos y pies con la calidad que mereces.',
   services_empty: 'No hay servicios activos publicados.',
-  gallery_kicker: 'GalerÃ­a',
+  gallery_kicker: 'Galería',
   gallery_title: 'Resultados que enamoran',
   gallery_cta: 'Reservar',
-  gallery_empty_title: 'La galerÃ­a estÃ¡ pendiente de fotografÃ­as.',
-  gallery_empty_text: 'AÃ±ade las imÃ¡genes reales desde Staff y aparecerÃ¡n aquÃ­.',
+  gallery_empty_title: 'La galería está pendiente de fotografías.',
+  gallery_empty_text: 'Añade las imágenes reales desde Staff y aparecerán aquí.',
   closing_title: 'Realza tu belleza.',
-  closing_subtitle: 'Calidad en cada servicio Â· Tu belleza, nuestra prioridad',
+  closing_subtitle: 'Calidad en cada servicio · Tu belleza, nuestra prioridad',
   closing_cta_booking: 'Solicitar cita',
   instagram_handle: 'WhatsApp 611 296 406',
   instagram_url: 'https://wa.me/34611296406'
@@ -324,7 +344,7 @@ app.put('/api/content', requireStaff, async (req, res) => {
   try {
     const incoming = req.body?.content;
     if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
-      return res.status(400).json({ error: 'Formato no vÃ¡lido' });
+      return res.status(400).json({ error: 'Formato no válido' });
     }
     const updates = [];
     for (const [key, raw] of Object.entries(incoming)) {
@@ -358,6 +378,27 @@ app.put('/api/content', requireStaff, async (req, res) => {
 // Crear tablas al iniciar
 const initDatabase = async () => {
   try {
+    // Migra el nombre histórico de la tabla, que se creó con texto mal codificado.
+    // Conserva todas sus filas y evita crear una tabla nueva vacía en instalaciones existentes.
+    // Detecta la tabla antigua por su representación UTF-8 hexadecimal, no por
+    // una cadena mojibake susceptible de quedar doblemente escapada al desplegar.
+    const legacySalonTableHex = '73616CC383C2B36E5F636F6E666967';
+    const salonTableName = 'sal' + String.fromCharCode(0xF3) + 'n_config';
+    const salonTableHex = Buffer.from(salonTableName, 'utf8').toString('hex').toUpperCase();
+    const salonTables = await dbAll(
+      "SELECT name, hex(name) AS nameHex FROM sqlite_master WHERE type = 'table' AND hex(name) IN (?, ?)",
+      [legacySalonTableHex, salonTableHex]
+    );
+    const legacySalonTable = salonTables.find((table) => table.nameHex === legacySalonTableHex);
+    const hasCorrectSalonTable = salonTables.some((table) => table.nameHex === salonTableHex);
+    if (legacySalonTable && hasCorrectSalonTable) {
+      throw new Error('Existen las tablas antigua y nueva de configuración del salón. Se detiene el arranque para evitar pérdida de datos.');
+    }
+    if (legacySalonTable) {
+      const quotedLegacyName = String(legacySalonTable.name).replace(/"/g, '""');
+      await dbRun('ALTER TABLE "' + quotedLegacyName + '" RENAME TO "' + salonTableName + '"');
+      console.log('Migrada la tabla de configuración del salón a su nombre UTF-8 correcto.');
+    }
     // Tabla de citas
     await dbRun(`
       CREATE TABLE IF NOT EXISTS appointments (
@@ -383,7 +424,7 @@ const initDatabase = async () => {
     await ensureColumn('appointments', 'lastActionSource', 'TEXT');
     await ensureColumn('appointments', 'lastActionAt', 'TEXT');
 
-    // Tabla de diseÃ±os personalizados
+    // Tabla de diseños personalizados
     await dbRun(`
       CREATE TABLE IF NOT EXISTS custom_designs (
         id TEXT PRIMARY KEY,
@@ -400,9 +441,9 @@ const initDatabase = async () => {
       )
     `);
 
-    // Tabla de configuraciÃ³n del salÃ³n
+    // Tabla de configuración del salón
     await dbRun(`
-      CREATE TABLE IF NOT EXISTS salÃ³n_config (
+      CREATE TABLE IF NOT EXISTS salón_config (
         id TEXT PRIMARY KEY,
         name TEXT,
         description TEXT,
@@ -428,25 +469,25 @@ const initDatabase = async () => {
       )
     `);
 
-    // MigraciÃ³n segura para instalaciones existentes
-    await ensureColumn('salÃ³n_config', 'whatsapp', 'TEXT');
-    await ensureColumn('salÃ³n_config', 'calendarPublic', 'INTEGER DEFAULT 1');
-    await ensureColumn('salÃ³n_config', 'workingHours', 'TEXT');
-    await ensureColumn('salÃ³n_config', 'blockedSlots', 'TEXT');
-    await ensureColumn('salÃ³n_config', 'vacations', 'TEXT');
-    await ensureColumn('salÃ³n_config', 'nailShapes', 'TEXT');
-    await ensureColumn('salÃ³n_config', 'nailLengths', 'TEXT');
-    await ensureColumn('salÃ³n_config', 'nailStyles', 'TEXT');
-    await ensureColumn('salÃ³n_config', 'products', 'TEXT');
-    await ensureColumn('salÃ³n_config', 'legalTitular', 'TEXT');
-    await ensureColumn('salÃ³n_config', 'legalNif', 'TEXT');
-    await ensureColumn('salÃ³n_config', 'legalAddress', 'TEXT');
-    await ensureColumn('salÃ³n_config', 'legalEmail', 'TEXT');
-    await ensureColumn('salÃ³n_config', 'legalPhone', 'TEXT');
-    await ensureColumn('salÃ³n_config', 'legalRegistry', 'TEXT');
-    await ensureColumn('salÃ³n_config', 'legalCustomNotice', 'TEXT');
-    await ensureColumn('salÃ³n_config', 'privacyCustomText', 'TEXT');
-    await ensureColumn('salÃ³n_config', 'cookiesCustomText', 'TEXT');
+    // Migración segura para instalaciones existentes
+    await ensureColumn('salón_config', 'whatsapp', 'TEXT');
+    await ensureColumn('salón_config', 'calendarPublic', 'INTEGER DEFAULT 1');
+    await ensureColumn('salón_config', 'workingHours', 'TEXT');
+    await ensureColumn('salón_config', 'blockedSlots', 'TEXT');
+    await ensureColumn('salón_config', 'vacations', 'TEXT');
+    await ensureColumn('salón_config', 'nailShapes', 'TEXT');
+    await ensureColumn('salón_config', 'nailLengths', 'TEXT');
+    await ensureColumn('salón_config', 'nailStyles', 'TEXT');
+    await ensureColumn('salón_config', 'products', 'TEXT');
+    await ensureColumn('salón_config', 'legalTitular', 'TEXT');
+    await ensureColumn('salón_config', 'legalNif', 'TEXT');
+    await ensureColumn('salón_config', 'legalAddress', 'TEXT');
+    await ensureColumn('salón_config', 'legalEmail', 'TEXT');
+    await ensureColumn('salón_config', 'legalPhone', 'TEXT');
+    await ensureColumn('salón_config', 'legalRegistry', 'TEXT');
+    await ensureColumn('salón_config', 'legalCustomNotice', 'TEXT');
+    await ensureColumn('salón_config', 'privacyCustomText', 'TEXT');
+    await ensureColumn('salón_config', 'cookiesCustomText', 'TEXT');
 
     // Tabla de servicios
     await dbRun(`
@@ -460,7 +501,7 @@ const initDatabase = async () => {
       )
     `);
 
-    // Campos editoriales del catÃ¡logo pÃºblico (migraciÃ³n segura)
+    // Campos editoriales del catálogo público (migración segura)
     await ensureColumn('services', 'category', 'TEXT');
     await ensureColumn('services', 'shortDescription', 'TEXT');
     await ensureColumn('services', 'longDescription', 'TEXT');
@@ -482,7 +523,7 @@ const initDatabase = async () => {
       )
     `);
 
-    // Solicitudes de cancelaciÃ³n: la reserva solo cambia tras decisiÃ³n del salÃ³n.
+    // Solicitudes de cancelación: la reserva solo cambia tras decisión del salón.
     await dbRun(`
       CREATE TABLE IF NOT EXISTS cancellation_requests (
         id TEXT PRIMARY KEY, appointmentId TEXT NOT NULL, locator TEXT NOT NULL,
@@ -493,7 +534,7 @@ const initDatabase = async () => {
     `);
     await dbRun('CREATE INDEX IF NOT EXISTS idx_cancellation_requests_status ON cancellation_requests(status, createdAt)');
 
-    // CRM: fichas de clientes y facturas con datos histÃ³ricos del emisor y receptor.
+    // CRM: fichas de clientes y facturas con datos históricos del emisor y receptor.
     await dbRun(`
       CREATE TABLE IF NOT EXISTS crm_customers (
         id TEXT PRIMARY KEY, name TEXT NOT NULL, phone TEXT, email TEXT, taxId TEXT,
@@ -561,12 +602,12 @@ const initDatabase = async () => {
       )
     `);
 
-    // Semilla inicial: una sola cabina/especialista y catÃ¡logo real del proyecto.
+    // Semilla inicial: una sola cabina/especialista y catálogo real del proyecto.
     const serviceCount = await dbGet('SELECT COUNT(*) AS c FROM services');
     if (Number(serviceCount?.c || 0) === 0) {
       const seedServices = [
-        ['diseno-laminado-cejas', 'DiseÃ±o y laminado de cejas', 'cejas', 'brows', 'DiseÃ±o personalizado y laminado para unas cejas definidas y duraderas.', 1],
-        ['manicura', 'Manicura', 'manicura', 'manicure', 'Manicura con acabados impecables: francesa, diseÃ±os y decoraciÃ³n.', 2],
+        ['diseno-laminado-cejas', 'Diseño y laminado de cejas', 'cejas', 'brows', 'Diseño personalizado y laminado para unas cejas definidas y duraderas.', 1],
+        ['manicura', 'Manicura', 'manicura', 'manicure', 'Manicura con acabados impecables: francesa, diseños y decoración.', 2],
         ['pedicura', 'Pedicura', 'pedicura', 'pedicure', 'Pies cuidados, suaves y con un esmaltado que enamora.', 3]
       ];
       for (const [id, name, category, icon, description, sortOrder] of seedServices) {
@@ -577,38 +618,38 @@ const initDatabase = async () => {
       }
     }
 
-    // Normaliza textos histÃ³ricos que pudieron guardarse con codificaciÃ³n defectuosa.
-    // Se ejecuta en cada arranque para corregir tambiÃ©n instalaciones ya existentes.
-    await dbRun('UPDATE specialists SET name = ?, description = ? WHERE id = ?', ['Cualquiera disponible', 'AsignaciÃ³n automÃ¡tica a la cabina disponible.', 'any']);
+    // Normaliza textos históricos que pudieron guardarse con codificación defectuosa.
+    // Se ejecuta en cada arranque para corregir también instalaciones ya existentes.
+    await dbRun('UPDATE specialists SET name = ?, description = ? WHERE id = ?', ['Cualquiera disponible', 'Asignación automática a la cabina disponible.', 'any']);
 
     const specialistCount = await dbGet('SELECT COUNT(*) AS c FROM specialists');
     if (Number(specialistCount?.c || 0) === 0) {
       await dbRun(
         'INSERT INTO specialists (id, name, role, photo, description, active) VALUES (?, ?, ?, ?, ?, 1)',
-        ['any', 'Cualquiera disponible', 'Equipo BJ Beauty', '', 'AsignaciÃ³n automÃ¡tica a la cabina disponible.']
+        ['any', 'Cualquiera disponible', 'Equipo BJ Beauty', '', 'Asignación automática a la cabina disponible.']
       );
     }
 
-    const configCount = await dbGet('SELECT COUNT(*) AS c FROM salÃ³n_config');
+    const configCount = await dbGet('SELECT COUNT(*) AS c FROM salón_config');
     if (Number(configCount?.c || 0) === 0) {
       const defaultHours = [
         { day: 'Lunes', open: '09:00', close: '19:00', enabled: true },
         { day: 'Martes', open: '09:00', close: '19:00', enabled: true },
-        { day: 'MiÃ©rcoles', open: '09:00', close: '19:00', enabled: true },
+        { day: 'Miércoles', open: '09:00', close: '19:00', enabled: true },
         { day: 'Jueves', open: '09:00', close: '19:00', enabled: true },
         { day: 'Viernes', open: '09:00', close: '19:00', enabled: true },
-        { day: 'SÃ¡bado', open: '09:00', close: '13:00', enabled: true },
+        { day: 'Sábado', open: '09:00', close: '13:00', enabled: true },
         { day: 'Domingo', open: '10:00', close: '14:00', enabled: false }
       ];
       await dbRun(
-        `INSERT INTO salÃ³n_config
+        `INSERT INTO salón_config
          (id, name, description, phone, email, address, hours, logo, coverPhoto,
           primaryColor, accentColor, backgroundColor, whatsapp, calendarPublic,
           workingHours, blockedSlots, vacations, nailShapes, nailLengths, nailStyles, products, updatedAt)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           'main', 'BJ Beauty',
-          'EstÃ©tica y Bienestar Â· DiseÃ±o y laminado de cejas Â· Manicura Â· Pedicura Â· Tu belleza, nuestra pasiÃ³n',
+          'Estética y Bienestar · Diseño y laminado de cejas · Manicura · Pedicura · Tu belleza, nuestra pasión',
           '611296406', '', '',
           '',
           '', '', '#2B0F1E', '#E0407F', '#FDEEF3', '34611296406',
@@ -621,9 +662,34 @@ const initDatabase = async () => {
       );
     }
 
+    // Repara textos históricos almacenados con UTF-8 interpretado como Latin-1/Windows-1252.
+    // Solo recorre columnas TEXT y actualiza filas cuyo contenido realmente cambia.
+    const userTables = await dbAll("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'");
+    let repairedTextValues = 0;
+    for (const { name: tableName } of userTables) {
+      const quotedTable = '"' + String(tableName).replace(/"/g, '""') + '"';
+      const columns = await dbAll('PRAGMA table_info(' + quotedTable + ')');
+      for (const column of columns.filter((item) => /TEXT/i.test(String(item.type || '')))) {
+        const quotedColumn = '"' + String(column.name).replace(/"/g, '""') + '"';
+        const rows = await dbAll(
+          'SELECT rowid AS __rowid__, ' + quotedColumn + ' AS __value FROM ' + quotedTable +
+          ' WHERE typeof(' + quotedColumn + ") = 'text' AND (" + quotedColumn + " LIKE '%Ã%' OR " + quotedColumn + " LIKE '%Â%' OR " + quotedColumn + " LIKE '%â%')"
+        );
+        for (const row of rows) {
+          const repaired = repairMojibake(row.__value);
+          if (repaired !== row.__value) {
+            await dbRun('UPDATE ' + quotedTable + ' SET ' + quotedColumn + ' = ? WHERE rowid = ?', [repaired, row.__rowid__]);
+            repairedTextValues += 1;
+          }
+        }
+      }
+    }
+    if (repairedTextValues) console.log('Textos históricos corregidos:', repairedTextValues);
+
     console.log('Base de datos inicializada correctamente');
   } catch (err) {
     console.error('Error inicializando BD:', err);
+    throw err;
   }
 };
 
@@ -673,12 +739,12 @@ app.post('/api/crm/invoices', requireStaff, async (req, res) => {
     const required = ['issuerName','issuerTaxId','issuerAddress','customerName','description'];
     if (required.some(k => !String(b[k] || '').trim())) return res.status(400).json({ error: 'Completa los datos fiscales del emisor, el cliente y el concepto.' });
     const quantity = Number(b.quantity || 1), unitPrice = Number(b.unitPrice), taxRate = Number(b.taxRate);
-    if (!Number.isFinite(quantity) || quantity <= 0 || quantity > 10000 || !Number.isFinite(unitPrice) || unitPrice < 0 || !Number.isFinite(taxRate) || taxRate < 0 || taxRate > 100) return res.status(400).json({ error: 'Cantidad, precio o tipo impositivo no vÃ¡lidos.' });
+    if (!Number.isFinite(quantity) || quantity <= 0 || quantity > 10000 || !Number.isFinite(unitPrice) || unitPrice < 0 || !Number.isFinite(taxRate) || taxRate < 0 || taxRate > 100) return res.status(400).json({ error: 'Cantidad, precio o tipo impositivo no válidos.' });
     const subtotal = Math.round(quantity * unitPrice * 100) / 100;
     const taxAmount = Math.round(subtotal * taxRate) / 100;
     const total = Math.round((subtotal + taxAmount) * 100) / 100;
     const issueDate = String(b.issueDate || new Date().toISOString().slice(0,10));
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(issueDate)) return res.status(400).json({ error: 'Fecha de factura no vÃ¡lida.' });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(issueDate)) return res.status(400).json({ error: 'Fecha de factura no válida.' });
     const year = issueDate.slice(0,4);
     const count = await dbGet('SELECT COUNT(*) AS n FROM crm_invoices WHERE number LIKE ?', [year + '-%']);
     const number = year + '-' + String((count?.n || 0) + 1).padStart(4, '0');
@@ -700,7 +766,7 @@ app.post('/api/crm/invoices', requireStaff, async (req, res) => {
 app.put('/api/crm/invoices/:id/status', requireStaff, async (req, res) => {
   try {
     const status = String(req.body.status || '');
-    if (!['Borrador','Emitida','Cobrada','Anulada'].includes(status)) return res.status(400).json({ error: 'Estado de factura no vÃ¡lido.' });
+    if (!['Borrador','Emitida','Cobrada','Anulada'].includes(status)) return res.status(400).json({ error: 'Estado de factura no válido.' });
     const invoice = await dbGet('SELECT * FROM crm_invoices WHERE id = ?', [req.params.id]);
     if (!invoice) return res.status(404).json({ error: 'Factura no encontrada.' });
     if (invoice.status === 'Anulada') return res.status(409).json({ error: 'Una factura anulada no se puede reactivar.' });
@@ -806,7 +872,7 @@ app.get('/api/customer/appointments', customerPortalRateLimit, async (req, res) 
   try {
     const locator = String(req.query.locator || '').trim().toUpperCase();
     const phone = normalizeCustomerPhone(req.query.phone);
-    if (!locator || phone.length < 9) return res.status(400).json({ error: 'Introduce el localizador y el telÃ©fono completo.' });
+    if (!locator || phone.length < 9) return res.status(400).json({ error: 'Introduce el localizador y el teléfono completo.' });
     const appointment = await dbGet('SELECT * FROM appointments WHERE UPPER(locator) = ?', [locator]);
     if (!appointment || normalizeCustomerPhone(appointment.clientPhone) !== phone) return res.status(404).json({ error: 'No encontramos una cita con esos datos.' });
     const requests = await dbAll('SELECT id, status, reason, createdAt, decidedAt, decisionNotes FROM cancellation_requests WHERE appointmentId = ? ORDER BY createdAt DESC', [appointment.id]);
@@ -819,7 +885,7 @@ app.post('/api/customer/appointments/:id/cancellation-requests', customerPortalR
     const locator = String(req.body.locator || '').trim().toUpperCase();
     const phone = normalizeCustomerPhone(req.body.phone);
     const reason = String(req.body.reason || '').trim().slice(0, 500);
-    if (!locator || phone.length < 9) return res.status(400).json({ error: 'Datos de verificaciÃ³n incompletos.' });
+    if (!locator || phone.length < 9) return res.status(400).json({ error: 'Datos de verificación incompletos.' });
     const appointment = await dbGet('SELECT * FROM appointments WHERE id = ? AND UPPER(locator) = ?', [req.params.id, locator]);
     if (!appointment || normalizeCustomerPhone(appointment.clientPhone) !== phone) return res.status(404).json({ error: 'No encontramos esa cita.' });
     if (appointment.status !== 'Confirmada') return res.status(409).json({ error: 'Solo se pueden solicitar cancelaciones de citas confirmadas.' });
@@ -839,42 +905,63 @@ app.put('/api/cancellation-requests/:id/decision', requireStaff, async (req, res
   try {
     const decision = String(req.body.decision || '');
     const decisionNotes = String(req.body.decisionNotes || '').trim().slice(0, 500);
-    if (!['Aceptada', 'Rechazada'].includes(decision)) return res.status(400).json({ error: 'DecisiÃ³n no vÃ¡lida.' });
+    if (!['Aceptada', 'Rechazada'].includes(decision)) return res.status(400).json({ error: 'Decisión no válida.' });
     const request = await dbGet('SELECT * FROM cancellation_requests WHERE id = ?', [req.params.id]);
     if (!request) return res.status(404).json({ error: 'Solicitud no encontrada.' });
     if (request.status !== 'Pendiente') return res.status(409).json({ error: 'Esta solicitud ya ha sido resuelta.' });
     const appointment = await dbGet('SELECT * FROM appointments WHERE id = ?', [request.appointmentId]);
     if (!appointment) return res.status(404).json({ error: 'La cita asociada ya no existe.' });
-    if (decision === 'Aceptada' && appointment.status !== 'Confirmada') return res.status(409).json({ error: 'La cita ya no estÃ¡ confirmada.' });
+    if (decision === 'Aceptada' && appointment.status !== 'Confirmada') return res.status(409).json({ error: 'La cita ya no está confirmada.' });
     const now = new Date().toISOString();
     await dbRun('UPDATE cancellation_requests SET status = ?, decidedAt = ?, decisionNotes = ? WHERE id = ?', [decision, now, decisionNotes, request.id]);
     if (decision === 'Aceptada') await dbRun("UPDATE appointments SET status = 'Cancelada', updatedAt = ?, lastActionSource = 'staff-cancellation-request', lastActionAt = ? WHERE id = ?", [now, now, appointment.id]);
-    if (appointment.clientEmail) sendEmail({ to: appointment.clientEmail, subject: decision === 'Aceptada' ? 'CancelaciÃ³n aceptada Â· cita ' + appointment.locator : 'Solicitud de cancelaciÃ³n rechazada Â· cita ' + appointment.locator, templateName: decision === 'Aceptada' ? 'booking-cancelled.html' : 'booking-confirmed.html', vars: { clientName: appointment.clientName, locator: appointment.locator, date: appointment.date, time: appointment.time, decisionNotes } });
+    if (appointment.clientEmail) sendEmail({ to: appointment.clientEmail, subject: decision === 'Aceptada' ? 'Cancelación aceptada · cita ' + appointment.locator : 'Solicitud de cancelación rechazada · cita ' + appointment.locator, templateName: decision === 'Aceptada' ? 'booking-cancelled.html' : 'booking-confirmed.html', vars: { clientName: appointment.clientName, locator: appointment.locator, date: appointment.date, time: appointment.time, decisionNotes } });
     res.json({ success: true, decision, appointmentStatus: decision === 'Aceptada' ? 'Cancelada' : appointment.status });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 const n8nApiGuard = (req, res, next) => {
-  const expected = process.env.N8N_API_KEY;
+  const expected = String(process.env.N8N_API_KEY || '');
   if (!expected) return res.status(503).json({ error: 'N8N_API_KEY no configurada en el servidor' });
-  if (req.get('X-API-Key') !== expected) return res.status(401).json({ error: 'API key de n8n no valida' });
+  const provided = String(req.get('X-API-Key') || '');
+  const expectedBuffer = Buffer.from(expected, 'utf8');
+  const providedBuffer = Buffer.from(provided, 'utf8');
+  if (expectedBuffer.length !== providedBuffer.length || !crypto.timingSafeEqual(expectedBuffer, providedBuffer)) {
+    return res.status(401).json({ error: 'API key de n8n no valida' });
+  }
   next();
 };
-const normalizePhone = (value) => String(value || '').replace(/\D/g, '');
+const normalizePhone = (value) => {
+  let digits = String(value || '').replace(/\D/g, '');
+  if (digits.startsWith('00')) digits = digits.slice(2);
+  if (digits.length === 9 && /^[6789]/.test(digits)) digits = '34' + digits;
+  return digits;
+};
+const isValidPhone = (phone) => phone.length >= 9 && phone.length <= 15;
+const requireN8nPhone = (req, res, next) => {
+  const rawPhone = req.params.phone || (req.query && req.query.phone) || (req.body && req.body.phone) || '';
+  const phone = normalizePhone(rawPhone);
+  if (!isValidPhone(phone)) {
+    return res.status(400).json({ error: 'Se requiere un teléfono válido para consultar o modificar una cita.' });
+  }
+  req.n8nPhone = phone;
+  next();
+};
 const serializeAppointment = (a) => ({ ...a, serviceIds: JSON.parse(a.serviceIds || '[]'), addonIds: JSON.parse(a.addonIds || '[]') });
 
-// Propiedad: si n8n envia phone (query o body), debe coincidir con el telefono de la cita.
-const n8nOwns = (appointment, req) => {
-  const phone = normalizePhone((req.query && req.query.phone) || (req.body && req.body.phone));
-  if (!phone) return true;
-  return normalizePhone(appointment.clientPhone) === phone;
-};
+// La propiedad nunca es opcional: todas las consultas o cambios de una cita
+// individual deben demostrar que el teléfono coincide con el de la reserva.
+const n8nOwns = (appointment, req) => Boolean(req.n8nPhone) && normalizePhone(appointment.clientPhone) === req.n8nPhone;
 const madridNow = () => {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date());
   const g = (t) => parts.find(p => p.type === t).value;
   return { date: g('year') + '-' + g('month') + '-' + g('day'), minutes: Number(g('hour')) * 60 + Number(g('minute')) };
 };
-const toMinutes = (hhmm) => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || '')); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
+const toMinutes = (hhmm) => {
+  const value = String(hhmm || '');
+  if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value)) return null;
+  return Number(value.slice(0, 2)) * 60 + Number(value.slice(3, 5));
+};
 const toHHMM = (min) => String(Math.floor(min / 60)).padStart(2, '0') + ':' + String(min % 60).padStart(2, '0');
 const isPastAppointment = (a) => { const now = madridNow(); const start = toMinutes(a.time); if (a.date < now.date) return true; if (a.date > now.date) return false; return start !== null && start <= now.minutes; };
 
@@ -883,18 +970,18 @@ app.get('/api/integrations/n8n/health', n8nApiGuard, (req, res) => {
   res.json({ success: true, service: 'bj-beauty', version: 1, verifactu: 'not-active' });
 });
 
-app.get('/api/integrations/n8n/appointments/:id', n8nApiGuard, async (req, res) => {
+app.get('/api/integrations/n8n/appointments/:id', n8nApiGuard, requireN8nPhone, async (req, res) => {
   try { const appointment = await dbGet('SELECT * FROM appointments WHERE id = ?', [req.params.id]); if (!appointment || !n8nOwns(appointment, req)) return res.status(404).json({ error: 'Cita no encontrada' }); res.json({ success: true, appointment: serializeAppointment(appointment) }); }
   catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.get('/api/integrations/n8n/appointments/by-locator/:locator', n8nApiGuard, async (req, res) => {
+app.get('/api/integrations/n8n/appointments/by-locator/:locator', n8nApiGuard, requireN8nPhone, async (req, res) => {
   try { const appointment = await dbGet('SELECT * FROM appointments WHERE locator = ?', [req.params.locator]); if (!appointment || !n8nOwns(appointment, req)) return res.status(404).json({ error: 'Cita no encontrada' }); res.json({ success: true, appointment: serializeAppointment(appointment) }); }
   catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.get('/api/integrations/n8n/appointments/by-phone/:phone', n8nApiGuard, async (req, res) => {
-  try { const phone = normalizePhone(req.params.phone); const status = req.query.status ? String(req.query.status) : null; const rows = await dbAll('SELECT * FROM appointments ORDER BY date ASC, time ASC'); const matches = rows.filter(a => normalizePhone(a.clientPhone) === phone && (!status || a.status === status)); res.json({ success: true, count: matches.length, appointments: matches.map(serializeAppointment) }); }
+app.get('/api/integrations/n8n/appointments/by-phone/:phone', n8nApiGuard, requireN8nPhone, async (req, res) => {
+  try { const phone = req.n8nPhone; const status = req.query.status ? String(req.query.status) : null; const rows = await dbAll('SELECT * FROM appointments ORDER BY date ASC, time ASC'); const matches = rows.filter(a => normalizePhone(a.clientPhone) === phone && (!status || a.status === status)); res.json({ success: true, count: matches.length, appointments: matches.map(serializeAppointment) }); }
   catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -904,6 +991,8 @@ const n8nSetStatus = async (req, res, targetStatus) => {
     if (!current || !n8nOwns(current, req)) return res.status(404).json({ error: 'Cita no encontrada' });
     if (targetStatus === 'Completada' && !isPastAppointment(current)) return res.status(409).json({ error: 'No se puede completar una cita futura' });
     if (targetStatus === 'Confirmada' && current.status === 'Completada') return res.status(409).json({ error: 'Una cita completada no puede volver a Confirmada' });
+    if (targetStatus === 'Confirmada' && current.status === 'Cancelada') return res.status(409).json({ error: 'Una cita cancelada no puede reactivarse mediante esta accion' });
+    if (targetStatus === 'Confirmada' && current.status === 'Cancelada') return res.status(409).json({ error: 'Una cita cancelada no puede reactivarse mediante esta accion' });
     if (targetStatus === 'Cancelada' && current.status === 'Completada') return res.status(409).json({ error: 'Una cita completada no puede cancelarse mediante esta accion' });
     if (targetStatus === 'Completada' && current.status === 'Cancelada') return res.status(409).json({ error: 'Una cita cancelada no puede completarse' });
     if (current.status === targetStatus) return res.json({ success: true, action: targetStatus, alreadySet: true, appointment: serializeAppointment(current) });
@@ -915,19 +1004,28 @@ const n8nSetStatus = async (req, res, targetStatus) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 
-app.post('/api/integrations/n8n/appointments/:id/confirm', n8nApiGuard, (req, res) => n8nSetStatus(req, res, 'Confirmada'));
-app.post('/api/integrations/n8n/appointments/:id/cancel', n8nApiGuard, (req, res) => n8nSetStatus(req, res, 'Cancelada'));
-app.post('/api/integrations/n8n/appointments/:id/complete', n8nApiGuard, (req, res) => n8nSetStatus(req, res, 'Completada'));
+app.post('/api/integrations/n8n/appointments/:id/confirm', n8nApiGuard, requireN8nPhone, (req, res) => n8nSetStatus(req, res, 'Confirmada'));
+app.post('/api/integrations/n8n/appointments/:id/cancel', n8nApiGuard, requireN8nPhone, (req, res) => n8nSetStatus(req, res, 'Cancelada'));
+app.post('/api/integrations/n8n/appointments/:id/complete', n8nApiGuard, requireN8nPhone, (req, res) => n8nSetStatus(req, res, 'Completada'));
 
 // ---- Catalogo, disponibilidad y reserva para el agente de WhatsApp ----
-const SLOT_MINUTES = Number(process.env.SLOT_MINUTES || 30);
-const MIN_LEAD_MINUTES = Number(process.env.N8N_MIN_LEAD_MINUTES || 60);
-const MAX_DAYS_AHEAD = Number(process.env.N8N_MAX_DAYS_AHEAD || 90);
-const MAX_ACTIVE_PER_PHONE = Number(process.env.N8N_MAX_ACTIVE_APPOINTMENTS_PER_PHONE || 3);
+const readIntegerEnv = (name, fallback, minimum = 1, maximum = Number.MAX_SAFE_INTEGER) => {
+  const parsed = Number.parseInt(process.env[name] || '', 10);
+  return Number.isSafeInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : fallback;
+};
+const SLOT_MINUTES = readIntegerEnv('SLOT_MINUTES', 30, 5, 240);
+const MIN_LEAD_MINUTES = readIntegerEnv('N8N_MIN_LEAD_MINUTES', 60, 0);
+const MAX_DAYS_AHEAD = readIntegerEnv('N8N_MAX_DAYS_AHEAD', 90, 1, 365);
+const MAX_ACTIVE_PER_PHONE = readIntegerEnv('N8N_MAX_ACTIVE_APPOINTMENTS_PER_PHONE', 3, 1, 100);
 const DAY_KEYS = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
 const stripAccents = (v) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 const parseJson = (v, fallback) => { try { const x = typeof v === 'string' ? JSON.parse(v) : v; return x ?? fallback; } catch { return fallback; } };
-const isDateStr = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) && !Number.isNaN(Date.parse(v + 'T12:00:00Z'));
+const isDateStr = (value) => {
+  const date = String(value || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+  const parsed = new Date(date + 'T00:00:00.000Z');
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date;
+};
 
 const loadServices = async (ids) => {
   const unique = [...new Set((ids || []).map(String))];
@@ -941,7 +1039,7 @@ const loadServices = async (ids) => {
 };
 
 const computeSlots = async ({ date, duration, specialistId }) => {
-  const cfg = await dbGet("SELECT workingHours, blockedSlots, vacations, calendarPublic FROM salÃ³n_config WHERE id = 'main'");
+  const cfg = await dbGet("SELECT workingHours, blockedSlots, vacations, calendarPublic FROM salón_config WHERE id = 'main'");
   const working = parseJson(cfg && cfg.workingHours, []);
   const blocked = parseJson(cfg && cfg.blockedSlots, []);
   const vacations = parseJson(cfg && cfg.vacations, []);
@@ -951,31 +1049,59 @@ const computeSlots = async ({ date, duration, specialistId }) => {
   const hours = working.find(h => stripAccents(h.day) === dayKey && h.enabled !== false);
   if (!hours) return [];
   const open = toMinutes(hours.open); const close = toMinutes(hours.close);
-  if (open === null || close === null) return [];
+  if (open === null || close === null || close <= open || !Number.isFinite(duration) || duration <= 0) return [];
   const blockedIntervals = [];
   for (const b of blocked) {
     const txt = String(b).trim();
     if (txt === date) return [];
-    const m = /^(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})$/.exec(txt);
-    if (m && m[1] === date) blockedIntervals.push([toMinutes(m[2]), toMinutes(m[3])]);
+    const m = /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})$/.exec(txt);
+    if (m && m[1] === date) {
+      const start = toMinutes(m[2]); const end = toMinutes(m[3]);
+      if (start !== null && end !== null && end > start) blockedIntervals.push([start, end]);
+    }
   }
-  let specialists = (await dbAll('SELECT id, name FROM specialists WHERE active = 1')).filter(s => s.id !== 'any');
-  if (specialistId) specialists = specialists.filter(s => s.id === specialistId);
+
+  // Si el salón solo tiene el especialista genérico "any", se trata como
+  // un único recurso real (cabina). Si hay personal concreto, "any" no cuenta
+  // como especialista asignable.
+  const activeSpecialists = await dbAll('SELECT id, name FROM specialists WHERE active = 1');
+  const namedSpecialists = activeSpecialists.filter(s => s.id !== 'any');
+  const assignableSpecialists = namedSpecialists.length
+    ? namedSpecialists
+    : activeSpecialists.filter(s => s.id === 'any').slice(0, 1);
+  const specialists = specialistId
+    ? assignableSpecialists.filter(s => s.id === specialistId)
+    : assignableSpecialists;
   if (!specialists.length) return [];
+
   const booked = (await dbAll("SELECT specialistId, time, totalDuration FROM appointments WHERE date = ? AND status != 'Cancelada'", [date]))
-    .map(a => ({ specialistId: a.specialistId, start: toMinutes(a.time), end: toMinutes(a.time) + (Number(a.totalDuration) || SLOT_MINUTES) }))
+    .map(a => ({ specialistId: String(a.specialistId || ''), start: toMinutes(a.time), end: toMinutes(a.time) + (Number(a.totalDuration) || SLOT_MINUTES) }))
     .filter(a => a.start !== null);
   const now = madridNow();
   const overlaps = (s1, e1, s2, e2) => s1 < e2 && s2 < e1;
   const slots = [];
+
   for (let t = open; t + duration <= close; t += SLOT_MINUTES) {
     if (date === now.date && t < now.minutes + MIN_LEAD_MINUTES) continue;
     if (blockedIntervals.some(([bs, be]) => overlaps(t, t + duration, bs, be))) continue;
+
     const clash = booked.filter(a => overlaps(t, t + duration, a.start, a.end));
-    const taken = new Set(clash.filter(a => specialists.some(sp => sp.id === a.specialistId)).map(a => a.specialistId));
-    const unassigned = specialistId ? 0 : clash.filter(a => !specialists.some(sp => sp.id === a.specialistId)).length;
-    const free = specialists.filter(sp => !taken.has(sp.id));
-    if (free.length - unassigned > 0) slots.push({ time: toHHMM(t), specialistIds: free.map(f => f.id) });
+    const taken = new Set(clash
+      .filter(a => assignableSpecialists.some(sp => sp.id === a.specialistId))
+      .map(a => a.specialistId));
+
+    if (specialistId) {
+      const hasUnassignedConflict = clash.some(a => !assignableSpecialists.some(sp => sp.id === a.specialistId));
+      if (!taken.has(specialistId) && !hasUnassignedConflict) {
+        slots.push({ time: toHHMM(t), specialistIds: [specialistId] });
+      }
+      continue;
+    }
+
+    const free = assignableSpecialists.filter(sp => !taken.has(sp.id));
+    const unassignedConflicts = clash.filter(a => !assignableSpecialists.some(sp => sp.id === a.specialistId)).length;
+    const available = free.slice(unassignedConflicts);
+    if (available.length) slots.push({ time: toHHMM(t), specialistIds: available.map(s => s.id) });
   }
   return slots;
 };
@@ -984,7 +1110,7 @@ app.get('/api/integrations/n8n/catalog', n8nApiGuard, async (req, res) => {
   try {
     const services = (await dbAll('SELECT * FROM services WHERE active = 1 ORDER BY sortOrder ASC, name ASC')).map(s => ({ id: s.id, name: s.name, category: s.category || '', description: s.description || s.shortDescription || '', shortDescription: s.shortDescription || s.description || '', duration: s.duration == null ? null : Number(s.duration), durationMinutes: s.duration == null ? 0 : Number(s.duration), price: s.price == null ? null : Number(s.price) }));
     const specialists = (await dbAll('SELECT id, name, role FROM specialists WHERE active = 1')).filter(s => s.id !== 'any').map(s => ({ id: s.id, name: s.name, role: s.role || '' }));
-    const cfg = await dbGet("SELECT name, phone, whatsapp, address, hours, workingHours FROM salÃ³n_config WHERE id = 'main'");
+    const cfg = await dbGet("SELECT name, phone, whatsapp, address, hours, workingHours FROM salón_config WHERE id = 'main'");
     res.json({ success: true, salon: cfg ? { name: cfg.name, phone: cfg.phone, whatsapp: cfg.whatsapp, address: cfg.address, hours: cfg.hours, workingHours: parseJson(cfg.workingHours, []) } : null, currency: 'EUR', services, specialists });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -1025,13 +1151,23 @@ app.post('/api/integrations/n8n/appointments', n8nApiGuard, async (req, res) => 
       if ((Date.parse(date + 'T12:00:00Z') - Date.parse(now.date + 'T12:00:00Z')) / 86400000 > MAX_DAYS_AHEAD) return { status: 400, body: { error: 'Fecha demasiado lejana' } };
       const all = await dbAll("SELECT * FROM appointments WHERE status IN ('Confirmada','Pendiente')");
       const mine = all.filter(a => normalizePhone(a.clientPhone) === phone);
-      const same = mine.find(a => a.date === date && a.time === toHHMM(toMinutes(time)));
+      const requestedServiceIds = svc.services.map(service => service.id).sort();
+      const same = mine.find(a => {
+        if (a.date !== date || a.time !== toHHMM(toMinutes(time))) return false;
+        const existingServiceIds = parseJson(a.serviceIds, []).map(String).sort();
+        return existingServiceIds.length === requestedServiceIds.length &&
+          existingServiceIds.every((id, index) => id === requestedServiceIds[index]);
+      });
       if (same) return { status: 200, body: { success: true, alreadyExists: true, appointment: serializeAppointment(same) } };
       if (mine.filter(a => a.date >= now.date).length >= MAX_ACTIVE_PER_PHONE) return { status: 429, body: { error: 'Esta clienta ya tiene el maximo de citas activas', code: 'TOO_MANY_ACTIVE_APPOINTMENTS' } };
-      const slots = await computeSlots({ date, duration: svc.totalDuration, specialistId: b.specialistId ? String(b.specialistId) : null });
+      const requestedSpecialistId = b.specialistId ? String(b.specialistId).trim() : null;
+      const slots = await computeSlots({ date, duration: svc.totalDuration, specialistId: requestedSpecialistId });
       const slot = slots.find(s => s.time === toHHMM(toMinutes(time)));
       if (!slot) return { status: 409, body: { error: 'Ese hueco ya no esta disponible', code: 'SLOT_UNAVAILABLE', alternatives: slots.slice(0, 6).map(s => s.time) } };
-      const specialistId = b.specialistId ? String(b.specialistId) : slot.specialistIds[0];
+      const specialistId = requestedSpecialistId || slot.specialistIds[0];
+      if (!specialistId || !slot.specialistIds.includes(specialistId)) {
+        return { status: 409, body: { error: 'No hay un especialista disponible para ese horario', code: 'SPECIALIST_UNAVAILABLE' } };
+      }
       let locator = ''; for (let i = 0; i < 20; i++) { const c = 'LGN-' + Math.floor(1000 + Math.random() * 9000); if (!(await dbGet('SELECT id FROM appointments WHERE locator = ?', [c]))) { locator = c; break; } }
       if (!locator) return { status: 500, body: { error: 'No se pudo generar el localizador' } };
       const id = 'appt_' + Date.now() + '_' + crypto.randomBytes(3).toString('hex');
@@ -1098,27 +1234,53 @@ app.delete('/api/designs/:id', requireStaff, async (req, res) => {
 });
 
 // CONFIGURACIN
+// Solo se exponen los campos necesarios para la web pública y sus textos legales.
+const PUBLIC_CONFIG_FIELDS = [
+  'name', 'description', 'phone', 'email', 'address', 'hours', 'logo', 'coverPhoto',
+  'primaryColor', 'accentColor', 'backgroundColor', 'whatsapp',
+  'legalTitular', 'legalNif', 'legalAddress', 'legalEmail', 'legalPhone', 'legalRegistry',
+  'legalCustomNotice', 'privacyCustomText', 'cookiesCustomText'
+];
+
 app.get('/api/config', async (req, res) => {
   try {
-    const config = await dbGet('SELECT * FROM salÃ³n_config WHERE id = ?', ['main']);
+    const config = await dbGet('SELECT * FROM salón_config WHERE id = ?', ['main']);
+    if (!config) return res.json({});
+    const publicConfig = Object.fromEntries(
+      PUBLIC_CONFIG_FIELDS.filter((field) => config[field] !== undefined).map((field) => [field, config[field]])
+    );
+    res.set('Cache-Control', 'public, max-age=60');
+    res.json(publicConfig);
+  } catch (err) {
+    console.error('Error leyendo configuración pública:', err);
+    res.status(500).json({ error: 'No se pudo cargar la configuración.' });
+  }
+});
+
+// La configuración operativa completa solo está disponible para una sesión Staff válida.
+app.get('/api/staff/config', requireStaff, async (req, res) => {
+  try {
+    const config = await dbGet('SELECT * FROM salón_config WHERE id = ?', ['main']);
+    res.set('Cache-Control', 'no-store');
     res.json(config || {});
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Error leyendo configuración Staff:', err);
+    res.status(500).json({ error: 'No se pudo cargar la configuración.' });
   }
 });
 
 app.put('/api/config', requireStaff, async (req, res) => {
   try {
     const { name, description, phone, email, address, hours, logo, coverPhoto, primaryColor, accentColor, backgroundColor, whatsapp, calendarPublic, workingHours, blockedSlots, vacations, nailShapes, nailLengths, nailStyles, products, legalTitular, legalNif, legalAddress, legalEmail, legalPhone, legalRegistry, legalCustomNotice, privacyCustomText, cookiesCustomText } = req.body;
-    const existing = await dbGet('SELECT id FROM salÃ³n_config WHERE id = ?', ['main']);
+    const existing = await dbGet('SELECT id FROM salón_config WHERE id = ?', ['main']);
     const values = [name, description, phone, email, address, hours, logo, coverPhoto, primaryColor, accentColor, backgroundColor, whatsapp, calendarPublic === undefined ? 1 : (calendarPublic ? 1 : 0), JSON.stringify(workingHours ?? []), JSON.stringify(blockedSlots ?? []), JSON.stringify(vacations ?? []), JSON.stringify(nailShapes ?? []), JSON.stringify(nailLengths ?? []), JSON.stringify(nailStyles ?? []), JSON.stringify(products ?? []), legalTitular ?? '', legalNif ?? '', legalAddress ?? '', legalEmail ?? '', legalPhone ?? '', legalRegistry ?? '', legalCustomNotice ?? '', privacyCustomText ?? '', cookiesCustomText ?? '', new Date().toISOString()];
     if (existing) {
-      await dbRun('UPDATE salÃ³n_config SET name=?, description=?, phone=?, email=?, address=?, hours=?, logo=?, coverPhoto=?, primaryColor=?, accentColor=?, backgroundColor=?, whatsapp=?, calendarPublic=?, workingHours=?, blockedSlots=?, vacations=?, nailShapes=?, nailLengths=?, nailStyles=?, products=?, legalTitular=?, legalNif=?, legalAddress=?, legalEmail=?, legalPhone=?, legalRegistry=?, legalCustomNotice=?, privacyCustomText=?, cookiesCustomText=?, updatedAt=? WHERE id=?', [...values, 'main']);
+      await dbRun('UPDATE salón_config SET name=?, description=?, phone=?, email=?, address=?, hours=?, logo=?, coverPhoto=?, primaryColor=?, accentColor=?, backgroundColor=?, whatsapp=?, calendarPublic=?, workingHours=?, blockedSlots=?, vacations=?, nailShapes=?, nailLengths=?, nailStyles=?, products=?, legalTitular=?, legalNif=?, legalAddress=?, legalEmail=?, legalPhone=?, legalRegistry=?, legalCustomNotice=?, privacyCustomText=?, cookiesCustomText=?, updatedAt=? WHERE id=?', [...values, 'main']);
     } else {
-      await dbRun('INSERT INTO salÃ³n_config (id,name,description,phone,email,address,hours,logo,coverPhoto,primaryColor,accentColor,backgroundColor,whatsapp,calendarPublic,workingHours,blockedSlots,vacations,nailShapes,nailLengths,nailStyles,products,legalTitular,legalNif,legalAddress,legalEmail,legalPhone,legalRegistry,legalCustomNotice,privacyCustomText,cookiesCustomText,updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', ['main', ...values]);
+      await dbRun('INSERT INTO salón_config (id,name,description,phone,email,address,hours,logo,coverPhoto,primaryColor,accentColor,backgroundColor,whatsapp,calendarPublic,workingHours,blockedSlots,vacations,nailShapes,nailLengths,nailStyles,products,legalTitular,legalNif,legalAddress,legalEmail,legalPhone,legalRegistry,legalCustomNotice,privacyCustomText,cookiesCustomText,updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', ['main', ...values]);
     }
     res.json({ success: true });
-  } catch (err) { console.error('Error guardando configuraciÃ³n:', err); res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error('Error guardando configuración:', err); res.status(500).json({ error: err.message }); }
 });
 
 // SERVICIOS
@@ -1222,9 +1384,15 @@ app.delete('/api/specialists/:id', requireStaff, async (req, res) => {
 // Ver I:\instagram-autopilot\INTEGRATION.md para el contrato de este endpoint.
 app.get('/api/public/content-feed', async (req, res) => {
   try {
-    const providedKey = req.header('x-api-key');
-    if (process.env.CONTENT_FEED_API_KEY && providedKey !== process.env.CONTENT_FEED_API_KEY) {
-      return res.status(401).json({ error: 'API key invÃ¡lida' });
+    const configuredKey = process.env.CONTENT_FEED_API_KEY || '';
+    const providedKey = req.header('x-api-key') || '';
+    if (!configuredKey) {
+      return res.status(503).json({ error: 'El acceso al feed no está configurado en el servidor.' });
+    }
+    const expected = Buffer.from(configuredKey);
+    const provided = Buffer.from(providedKey);
+    if (expected.length !== provided.length || !crypto.timingSafeEqual(expected, provided)) {
+      return res.status(401).json({ error: 'API key inválida' });
     }
     const photos = await dbAll('SELECT * FROM gallery ORDER BY displayOrder ASC, uploadedAt DESC');
     const baseUrl = `${req.protocol}://${req.get('host')}`;
@@ -1233,7 +1401,7 @@ app.get('/api/public/content-feed', async (req, res) => {
       type: 'gallery_photo',
       imageUrl: `${baseUrl}/api/gallery/${p.id}/image`,
       title: p.title || '',
-      context: p.caption || 'Foto de la galerÃ­a del salÃ³n',
+      context: p.caption || 'Foto de la galería del salón',
       createdAt: p.uploadedAt,
       consent: true
     }));
@@ -1244,7 +1412,7 @@ app.get('/api/public/content-feed', async (req, res) => {
 });
 
 // Sirve la foto de galera como imagen real (necesario para que Instagram/el
-// servicio externo puedan descargarla por URL pÃºblica, no vale el base64)
+// servicio externo puedan descargarla por URL pública, no vale el base64)
 app.get('/api/gallery/:id/image', async (req, res) => {
   try {
     const photo = await dbGet('SELECT photoBase64 FROM gallery WHERE id = ?', [req.params.id]);
@@ -1296,25 +1464,69 @@ app.delete('/api/gallery/:id', requireStaff, async (req, res) => {
   }
 });
 
-// SOLICITUDES DE CITA
-app.post('/api/booking-request', async (req, res) => {
+// SOLICITUDES DE CITA PÚBLICAS
+const bookingRequestAttempts = new Map();
+const bookingRequestRateLimit = (req, res, next) => {
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  const current = bookingRequestAttempts.get(ip);
+  if (!current || now - current.startedAt > 15 * 60 * 1000) {
+    bookingRequestAttempts.set(ip, { startedAt: now, count: 1 });
+    return next();
+  }
+  if (current.count >= 5) {
+    const retryAfter = Math.ceil((15 * 60 * 1000 - (now - current.startedAt)) / 1000);
+    res.set('Retry-After', String(retryAfter));
+    return res.status(429).json({ error: 'Has enviado varias solicitudes. Espera unos minutos antes de volver a intentarlo.' });
+  }
+  current.count += 1;
+  next();
+};
+
+app.post('/api/booking-request', bookingRequestRateLimit, async (req, res) => {
   try {
-    const { clientName, clientPhone, clientEmail, serviceType, preferredDate, preferredTime, notes, createdAt } = req.body;
-    if (req.body.privacyAccepted !== true) return res.status(400).json({ error: 'Es necesario aceptar la polÃ­tica de privacidad.' });
-    const id = Date.now().toString();
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const clientName = String(body.clientName || '').trim();
+    const clientPhone = String(body.clientPhone || '').trim();
+    const clientEmail = String(body.clientEmail || '').trim().toLowerCase();
+    const serviceType = String(body.serviceType || '').trim();
+    const preferredDate = String(body.preferredDate || '').trim();
+    const preferredTime = String(body.preferredTime || '').trim();
+    const notes = String(body.notes || '').trim();
+    const phoneDigits = clientPhone.replace(/\D/g, '');
+
+    if (body.privacyAccepted !== true) {
+      return res.status(400).json({ error: 'Es necesario aceptar la política de privacidad.' });
+    }
+    if (clientName.length < 2 || clientName.length > 120) {
+      return res.status(400).json({ error: 'Introduce un nombre válido (máximo 120 caracteres).' });
+    }
+    if (phoneDigits.length < 9 || phoneDigits.length > 15) {
+      return res.status(400).json({ error: 'Introduce un teléfono válido.' });
+    }
+    if (clientEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clientEmail)) {
+      return res.status(400).json({ error: 'Introduce un correo electrónico válido.' });
+    }
+    if (!serviceType || serviceType.length > 120 || preferredDate.length > 10 || preferredTime.length > 30 || notes.length > 1000) {
+      return res.status(400).json({ error: 'Revisa el servicio, la fecha, la hora y las notas (máximo 1.000 caracteres).' });
+    }
+
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const privacyPolicyVersion = String(body.privacyPolicyVersion || '2026-11-27').slice(0, 40);
 
     await dbRun(
       `INSERT INTO booking_requests
        (id, clientName, clientPhone, clientEmail, serviceType, preferredDate, preferredTime, notes, status, createdAt, privacyAcceptedAt, privacyPolicyVersion)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, clientName, clientPhone, clientEmail, serviceType, preferredDate, preferredTime, notes, 'Pendiente', createdAt || new Date().toISOString(), new Date().toISOString(), String(req.body.privacyPolicyVersion || '2026-11-27')]
+      [id, clientName, clientPhone, clientEmail, serviceType, preferredDate, preferredTime, notes, 'Pendiente', now, now, privacyPolicyVersion]
     );
 
     const requestEmailVars = {
-      clientName: clientName || 'Cliente',
-      clientPhone: clientPhone || 'No indicado',
-      clientEmail: clientEmail || 'No indicado',
-      serviceType: serviceType || 'tu servicio',
+      clientName,
+      clientPhone,
+      clientEmail,
+      serviceType,
       preferredDate: preferredDate || 'a confirmar',
       preferredTime: preferredTime || 'a confirmar',
       notes: notes || 'Sin comentarios',
@@ -1331,7 +1543,7 @@ app.post('/api/booking-request', async (req, res) => {
       }),
       sendEmail({
         to: salonNotificationEmail,
-        subject: `Nueva solicitud de cita - ${clientName || 'Cliente'}`,
+        subject: `Nueva solicitud de cita - ${clientName}`,
         templateName: 'booking-request-owner.html',
         vars: requestEmailVars
       })
@@ -1342,9 +1554,10 @@ app.post('/api/booking-request', async (req, res) => {
       salonRecipient: salonNotificationEmail
     }));
 
-    res.json({ success: true, id });
+    res.status(201).json({ success: true, id });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Error guardando solicitud de cita:', err);
+    res.status(500).json({ error: 'No se pudo enviar la solicitud. Inténtalo de nuevo más tarde.' });
   }
 });
 
