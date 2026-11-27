@@ -22,6 +22,7 @@ export const BookingRequest: React.FC<BookingRequestProps> = ({ setActiveTab }) 
     return () => { cancelled = true; };
   }, []);
   const [loading, setLoading] = useState(false);
+  const [privacyAccepted, setPrivacyAccepted] = useState(false);
   const [formData, setFormData] = useState({
     clientName: '',
     clientPhone: '',
@@ -40,6 +41,7 @@ export const BookingRequest: React.FC<BookingRequestProps> = ({ setActiveTab }) 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
+    if (!privacyAccepted) { alert('Debes aceptar la política de privacidad para enviar la solicitud.'); return; }
     if (!formData.clientName || !formData.clientPhone || !formData.clientEmail) {
       alert('Por favor completa todos los campos requeridos.');
       return;
@@ -223,6 +225,11 @@ export const BookingRequest: React.FC<BookingRequestProps> = ({ setActiveTab }) 
               />
             </div>
           </div>
+
+          <label className="flex items-start gap-3 text-xs text-neutral-600">
+            <input type="checkbox" required checked={privacyAccepted} onChange={e=>setPrivacyAccepted(e.target.checked)} className="mt-0.5 accent-[#E0407F]" />
+            <span>He leído y acepto la <button type="button" onClick={()=>window.dispatchEvent(new CustomEvent('bjbeauty:open-privacy'))} className="underline text-[#A32A5F]">Política de Privacidad</button>. Es necesario aceptar para enviar la solicitud.</span>
+          </label>
 
           {/* Botón Enviar */}
           <div className="pt-6 border-t border-neutral-200">

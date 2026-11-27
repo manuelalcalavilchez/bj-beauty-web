@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Phone } from 'lucide-react';
 import { IconWhatsApp } from './BeautyIcons';
 import { BJLogo } from './BJLogo';
+import { LegalAndCookies } from './LegalAndCookies';
 import {
   apiService,
   CONFIG_UPDATED_EVENT,
@@ -75,7 +76,9 @@ export const Footer: React.FC = () => {
       </div>
 
       <div className="max-w-5xl mx-auto mt-6 pt-5 border-t border-[#E3C77A]/40 text-center text-xs text-[#5D4A57]">
-        © 2026 BJ Beauty · Estética y Bienestar · Tu belleza, nuestra pasión
+        <LegalAndCookies />
+        <span>© 2026 BJ Beauty · Estética y Bienestar · Tu belleza, nuestra pasión</span>
+        <span>Un producto de <a href="https://tecnologiaalcala.es" target="_blank" rel="noopener noreferrer" className="underline hover:text-[#E0407F]">Tecnología Alcalá</a></span>
       </div>
     </footer>
   );

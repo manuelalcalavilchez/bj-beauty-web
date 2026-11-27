@@ -1,5 +1,6 @@
-import 'dotenv/config';
+﻿import 'dotenv/config';
 import express from 'express';
+import sqlite3 from 'sqlite3';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
@@ -20,13 +21,14 @@ app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 
-// In-memory store (mocked — data resets on restart; provision Cloud SQL for persistence)
-const memTables = new Map();
-const getTable = (name) => {
-  if (!memTables.has(name)) memTables.set(name, []);
-  return memTables.get(name);
-};
-console.log('[AI Studio] Base de datos en memoria inicializada (sqlite3 mock activo)');
+// SQLite persistente: el directorio se crea antes de abrir la base de datos.
+const dbPath = process.env.DB_PATH || path.join(__dirname, 'data', 'bjbeauty.db');
+fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+const db = new sqlite3.Database(dbPath, (err) => { if (err) console.error('Database error:', err); else console.log('SQLite conectado:', dbPath); });
+const dbRun = (sql, params = []) => new Promise((resolve, reject) => { db.run(sql, params, function (err) { if (err) reject(err); else resolve(this); }); });
+const dbGet = (sql, params = []) => new Promise((resolve, reject) => { db.get(sql, params, (err, row) => { if (err) reject(err); else resolve(row); }); });
+const dbAll = (sql, params = []) => new Promise((resolve, reject) => { db.all(sql, params, (err, rows) => { if (err) reject(err); else resolve(rows || []); }); });
+const ensureColumn = async (table, column, definition) => { const columns = await dbAll('PRAGMA table_info(' + table + ')'); if (!columns.some(c => c.name === column)) await dbRun('ALTER TABLE ' + table + ' ADD COLUMN ' + column + ' ' + definition); };
 
 // ==================== EMAIL (nodemailer) ====================
 const TEMPLATES_DIR = path.join(__dirname, 'templates');
@@ -140,7 +142,7 @@ const matchWhere = (row, whereClause, params, cursor) => {
 
 const filterRows = (rows, whereClause, params, cursor) => {
   if (!whereClause) return [...rows];
-  // Evaluate parameter positions once by binding whereClause tokens first
+  // Evaluate parameter positions once by binding whereClause tokens firs
   const boundTokens = [];
   const tempCursor = { i: cursor.i };
   const parts = whereClause.split(/\s+AND\s+/i);
@@ -171,117 +173,6 @@ const sortRows = (rows, orderClause) => {
     return 0;
   });
 };
-
-const dbRun = async (sql, params = []) => {
-  const s = sql.replace(/\s+/g, ' ').trim();
-  const cursor = { i: 0 };
-
-  let m;
-  if ((m = /^CREATE TABLE IF NOT EXISTS\s+([^\s(]+)/i.exec(s))) {
-    getTable(m[1]);
-    return { changes: 0 };
-  }
-  if (/^CREATE INDEX IF NOT EXISTS/i.test(s) || /^ALTER TABLE/i.test(s)) {
-    return { changes: 0 };
-  }
-  if ((m = /^INSERT(?:\s+OR\s+(IGNORE))?\s+INTO\s+([^\s(]+)\s*\(([^)]+)\)\s*VALUES\s*\((.+?)\)(?:\s+ON\s+CONFLICT\s*\(([^)]+)\)\s*DO\s+UPDATE\s+SET\s+(.+))?$/i.exec(s))) {
-    const isIgnore = Boolean(m[1]);
-    const table = getTable(m[2]);
-    const cols = splitTopLevel(m[3]);
-    const vals = splitTopLevel(m[4]).map(tok => resolveToken(tok, params, cursor));
-    const row = {};
-    cols.forEach((col, idx) => { row[col] = vals[idx]; });
-
-    const conflictCol = m[5]?.trim();
-    const updateSet = m[6]?.trim();
-
-    if (conflictCol) {
-      const existing = table.find(r => r[conflictCol] === row[conflictCol]);
-      if (existing) {
-        for (const assign of splitTopLevel(updateSet)) {
-          const am = /^(\w+)\s*=\s*(.+)$/.exec(assign);
-          if (!am) continue;
-          const targetCol = am[1];
-          const expr = am[2].trim();
-          if (expr.startsWith('excluded.')) {
-            existing[targetCol] = row[expr.slice('excluded.'.length)];
-          } else {
-            existing[targetCol] = resolveToken(expr, params, cursor);
-          }
-        }
-        return { changes: 1 };
-      }
-    } else if (isIgnore) {
-      const keyCol = row.id !== undefined ? 'id' : (row.key !== undefined ? 'key' : null);
-      if (keyCol && table.some(r => r[keyCol] === row[keyCol])) {
-        return { changes: 0 };
-      }
-    }
-    table.push(row);
-    return { changes: 1 };
-  }
-  if ((m = /^UPDATE\s+([^\s]+)\s+SET\s+(.+?)(?:\s+WHERE\s+(.+))?$/i.exec(s))) {
-    const table = getTable(m[1]);
-    const assignments = splitTopLevel(m[2]).map(assign => {
-      const am = /^(\w+)\s*=\s*(.+)$/.exec(assign);
-      return { col: am[1], val: resolveToken(am[2], params, cursor) };
-    });
-    const matched = filterRows(table, m[3], params, cursor);
-    for (const row of matched) {
-      for (const { col, val } of assignments) row[col] = val;
-    }
-    return { changes: matched.length };
-  }
-  if ((m = /^DELETE\s+FROM\s+([^\s]+)(?:\s+WHERE\s+(.+))?$/i.exec(s))) {
-    const table = getTable(m[1]);
-    const matched = filterRows(table, m[2], params, cursor);
-    const keep = table.filter(r => !matched.includes(r));
-    memTables.set(m[1], keep);
-    return { changes: matched.length };
-  }
-  return { changes: 0 };
-};
-
-const dbAll = async (sql, params = []) => {
-  const s = sql.replace(/\s+/g, ' ').trim();
-  const cursor = { i: 0 };
-
-  let m;
-  if ((m = /^PRAGMA table_info\(([^)]+)\)/i.exec(s))) {
-    return [];
-  }
-  if ((m = /^SELECT\s+COUNT\(\*\)\s+AS\s+(\w+)\s+FROM\s+([^\s]+)(?:\s+WHERE\s+(.+?))?$/i.exec(s))) {
-    const table = getTable(m[2]);
-    const matched = filterRows(table, m[3], params, cursor);
-    return [{ [m[1]]: matched.length }];
-  }
-  if ((m = /^SELECT\s+MAX\((\w+)\)\s+as\s+(\w+)\s+FROM\s+([^\s]+)$/i.exec(s))) {
-    const table = getTable(m[3]);
-    const maxVal = table.reduce((acc, r) => Math.max(acc, Number(r[m[1]] || 0)), 0);
-    return [{ [m[2]]: maxVal }];
-  }
-  if ((m = /^SELECT\s+(.+?)\s+FROM\s+([^\s]+)(?:\s+WHERE\s+(.+?))?(?:\s+ORDER BY\s+(.+?))?$/i.exec(s))) {
-    const fieldsRaw = m[1].trim();
-    const table = getTable(m[2]);
-    const matched = filterRows(table, m[3], params, cursor);
-    const sorted = sortRows(matched, m[4]);
-    if (fieldsRaw === '*') return sorted.map(r => ({ ...r }));
-    const fields = splitTopLevel(fieldsRaw);
-    return sorted.map(r => {
-      const out = {};
-      for (const f of fields) out[f] = r[f];
-      return out;
-    });
-  }
-  return [];
-};
-
-const dbGet = async (sql, params = []) => {
-  const rows = await dbAll(sql, params);
-  return rows[0];
-};
-
-const ensureColumn = async () => {};
 
 // ==================== SEGURIDAD STAFF ====================
 // Autenticacion de la Cabina Staff validada en servidor. El PIN nunca viaja al bundle del frontend.
@@ -357,7 +248,7 @@ app.post('/api/staff/login', async (req, res) => {
   if (attempt.lockedUntil > now) {
     const retryAfter = Math.ceil((attempt.lockedUntil - now) / 1000);
     res.set('Retry-After', String(retryAfter));
-    return res.status(429).json({ error: 'Demasiados intentos. Prueba más tarde.', retryAfter });
+    return res.status(429).json({ error: 'Demasiados intentos. Prueba mÃ¡s tarde.', retryAfter });
   }
 
   const pin = typeof req.body?.pin === 'string' ? req.body.pin : '';
@@ -385,23 +276,23 @@ app.post('/api/staff/logout', requireStaff, (req, res) => {
 // ==================== CONTENIDOS DE LA WEB ====================
 // Textos editables desde Staff > Contenidos. Los valores por defecto reproducen la portada actual.
 const SITE_CONTENT_DEFAULTS = {
-  hero_kicker: 'BJ Beauty · Estética y Bienestar',
+  hero_kicker: 'BJ Beauty Â· EstÃ©tica y Bienestar',
   hero_title: 'Tu belleza,',
-  hero_title_highlight: 'nuestra pasión.',
-  hero_subtitle: 'Diseño y laminado de cejas · Manicura · Pedicura. Cuida tus detalles, realza tu belleza.',
+  hero_title_highlight: 'nuestra pasiÃ³n.',
+  hero_subtitle: 'DiseÃ±o y laminado de cejas Â· Manicura Â· Pedicura. Cuida tus detalles, realza tu belleza.',
   hero_cta_booking: 'Solicitar cita',
   hero_cta_instagram: 'WhatsApp 611 296 406',
   services_kicker: 'Servicios',
   services_title: 'Cuida tus detalles',
   services_intro: 'Cejas, manos y pies con la calidad que mereces.',
   services_empty: 'No hay servicios activos publicados.',
-  gallery_kicker: 'Galería',
+  gallery_kicker: 'GalerÃ­a',
   gallery_title: 'Resultados que enamoran',
   gallery_cta: 'Reservar',
-  gallery_empty_title: 'La galería está pendiente de fotografías.',
-  gallery_empty_text: 'Añade las imágenes reales desde Staff y aparecerán aquí.',
+  gallery_empty_title: 'La galerÃ­a estÃ¡ pendiente de fotografÃ­as.',
+  gallery_empty_text: 'AÃ±ade las imÃ¡genes reales desde Staff y aparecerÃ¡n aquÃ­.',
   closing_title: 'Realza tu belleza.',
-  closing_subtitle: 'Calidad en cada servicio · Tu belleza, nuestra prioridad',
+  closing_subtitle: 'Calidad en cada servicio Â· Tu belleza, nuestra prioridad',
   closing_cta_booking: 'Solicitar cita',
   instagram_handle: 'WhatsApp 611 296 406',
   instagram_url: 'https://wa.me/34611296406'
@@ -433,7 +324,7 @@ app.put('/api/content', requireStaff, async (req, res) => {
   try {
     const incoming = req.body?.content;
     if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
-      return res.status(400).json({ error: 'Formato no válido' });
+      return res.status(400).json({ error: 'Formato no vÃ¡lido' });
     }
     const updates = [];
     for (const [key, raw] of Object.entries(incoming)) {
@@ -492,7 +383,7 @@ const initDatabase = async () => {
     await ensureColumn('appointments', 'lastActionSource', 'TEXT');
     await ensureColumn('appointments', 'lastActionAt', 'TEXT');
 
-    // Tabla de diseños personalizados
+    // Tabla de diseÃ±os personalizados
     await dbRun(`
       CREATE TABLE IF NOT EXISTS custom_designs (
         id TEXT PRIMARY KEY,
@@ -509,9 +400,9 @@ const initDatabase = async () => {
       )
     `);
 
-    // Tabla de configuración del salón
+    // Tabla de configuraciÃ³n del salÃ³n
     await dbRun(`
-      CREATE TABLE IF NOT EXISTS salón_config (
+      CREATE TABLE IF NOT EXISTS salÃ³n_config (
         id TEXT PRIMARY KEY,
         name TEXT,
         description TEXT,
@@ -537,16 +428,25 @@ const initDatabase = async () => {
       )
     `);
 
-    // Migración segura para instalaciones existentes
-    await ensureColumn('salón_config', 'whatsapp', 'TEXT');
-    await ensureColumn('salón_config', 'calendarPublic', 'INTEGER DEFAULT 1');
-    await ensureColumn('salón_config', 'workingHours', 'TEXT');
-    await ensureColumn('salón_config', 'blockedSlots', 'TEXT');
-    await ensureColumn('salón_config', 'vacations', 'TEXT');
-    await ensureColumn('salón_config', 'nailShapes', 'TEXT');
-    await ensureColumn('salón_config', 'nailLengths', 'TEXT');
-    await ensureColumn('salón_config', 'nailStyles', 'TEXT');
-    await ensureColumn('salón_config', 'products', 'TEXT');
+    // MigraciÃ³n segura para instalaciones existentes
+    await ensureColumn('salÃ³n_config', 'whatsapp', 'TEXT');
+    await ensureColumn('salÃ³n_config', 'calendarPublic', 'INTEGER DEFAULT 1');
+    await ensureColumn('salÃ³n_config', 'workingHours', 'TEXT');
+    await ensureColumn('salÃ³n_config', 'blockedSlots', 'TEXT');
+    await ensureColumn('salÃ³n_config', 'vacations', 'TEXT');
+    await ensureColumn('salÃ³n_config', 'nailShapes', 'TEXT');
+    await ensureColumn('salÃ³n_config', 'nailLengths', 'TEXT');
+    await ensureColumn('salÃ³n_config', 'nailStyles', 'TEXT');
+    await ensureColumn('salÃ³n_config', 'products', 'TEXT');
+    await ensureColumn('salÃ³n_config', 'legalTitular', 'TEXT');
+    await ensureColumn('salÃ³n_config', 'legalNif', 'TEXT');
+    await ensureColumn('salÃ³n_config', 'legalAddress', 'TEXT');
+    await ensureColumn('salÃ³n_config', 'legalEmail', 'TEXT');
+    await ensureColumn('salÃ³n_config', 'legalPhone', 'TEXT');
+    await ensureColumn('salÃ³n_config', 'legalRegistry', 'TEXT');
+    await ensureColumn('salÃ³n_config', 'legalCustomNotice', 'TEXT');
+    await ensureColumn('salÃ³n_config', 'privacyCustomText', 'TEXT');
+    await ensureColumn('salÃ³n_config', 'cookiesCustomText', 'TEXT');
 
     // Tabla de servicios
     await dbRun(`
@@ -560,7 +460,7 @@ const initDatabase = async () => {
       )
     `);
 
-    // Campos editoriales del catálogo público (migración segura)
+    // Campos editoriales del catÃ¡logo pÃºblico (migraciÃ³n segura)
     await ensureColumn('services', 'category', 'TEXT');
     await ensureColumn('services', 'shortDescription', 'TEXT');
     await ensureColumn('services', 'longDescription', 'TEXT');
@@ -582,7 +482,7 @@ const initDatabase = async () => {
       )
     `);
 
-    // Solicitudes de cancelación: la reserva solo cambia tras decisión del salón.
+    // Solicitudes de cancelaciÃ³n: la reserva solo cambia tras decisiÃ³n del salÃ³n.
     await dbRun(`
       CREATE TABLE IF NOT EXISTS cancellation_requests (
         id TEXT PRIMARY KEY, appointmentId TEXT NOT NULL, locator TEXT NOT NULL,
@@ -593,7 +493,7 @@ const initDatabase = async () => {
     `);
     await dbRun('CREATE INDEX IF NOT EXISTS idx_cancellation_requests_status ON cancellation_requests(status, createdAt)');
 
-    // CRM: fichas de clientes y facturas con datos históricos del emisor y receptor.
+    // CRM: fichas de clientes y facturas con datos histÃ³ricos del emisor y receptor.
     await dbRun(`
       CREATE TABLE IF NOT EXISTS crm_customers (
         id TEXT PRIMARY KEY, name TEXT NOT NULL, phone TEXT, email TEXT, taxId TEXT,
@@ -637,6 +537,8 @@ const initDatabase = async () => {
         respondedAt TEXT
       )
     `);
+    await ensureColumn('booking_requests', 'privacyAcceptedAt', 'TEXT');
+    await ensureColumn('booking_requests', 'privacyPolicyVersion', 'TEXT');
 
     // Tabla de galera
     await dbRun(`
@@ -659,12 +561,12 @@ const initDatabase = async () => {
       )
     `);
 
-    // Semilla inicial: una sola cabina/especialista y catálogo real del proyecto.
+    // Semilla inicial: una sola cabina/especialista y catÃ¡logo real del proyecto.
     const serviceCount = await dbGet('SELECT COUNT(*) AS c FROM services');
     if (Number(serviceCount?.c || 0) === 0) {
       const seedServices = [
-        ['diseno-laminado-cejas', 'Diseño y laminado de cejas', 'cejas', 'brows', 'Diseño personalizado y laminado para unas cejas definidas y duraderas.', 1],
-        ['manicura', 'Manicura', 'manicura', 'manicure', 'Manicura con acabados impecables: francesa, diseños y decoración.', 2],
+        ['diseno-laminado-cejas', 'DiseÃ±o y laminado de cejas', 'cejas', 'brows', 'DiseÃ±o personalizado y laminado para unas cejas definidas y duraderas.', 1],
+        ['manicura', 'Manicura', 'manicura', 'manicure', 'Manicura con acabados impecables: francesa, diseÃ±os y decoraciÃ³n.', 2],
         ['pedicura', 'Pedicura', 'pedicura', 'pedicure', 'Pies cuidados, suaves y con un esmaltado que enamora.', 3]
       ];
       for (const [id, name, category, icon, description, sortOrder] of seedServices) {
@@ -675,38 +577,38 @@ const initDatabase = async () => {
       }
     }
 
-    // Normaliza textos históricos que pudieron guardarse con codificación defectuosa.
-    // Se ejecuta en cada arranque para corregir también instalaciones ya existentes.
-    await dbRun('UPDATE specialists SET name = ?, description = ? WHERE id = ?', ['Cualquiera disponible', 'Asignación automática a la cabina disponible.', 'any']);
+    // Normaliza textos histÃ³ricos que pudieron guardarse con codificaciÃ³n defectuosa.
+    // Se ejecuta en cada arranque para corregir tambiÃ©n instalaciones ya existentes.
+    await dbRun('UPDATE specialists SET name = ?, description = ? WHERE id = ?', ['Cualquiera disponible', 'AsignaciÃ³n automÃ¡tica a la cabina disponible.', 'any']);
 
     const specialistCount = await dbGet('SELECT COUNT(*) AS c FROM specialists');
     if (Number(specialistCount?.c || 0) === 0) {
       await dbRun(
         'INSERT INTO specialists (id, name, role, photo, description, active) VALUES (?, ?, ?, ?, ?, 1)',
-        ['any', 'Cualquiera disponible', 'Equipo BJ Beauty', '', 'Asignación automática a la cabina disponible.']
+        ['any', 'Cualquiera disponible', 'Equipo BJ Beauty', '', 'AsignaciÃ³n automÃ¡tica a la cabina disponible.']
       );
     }
 
-    const configCount = await dbGet('SELECT COUNT(*) AS c FROM salón_config');
+    const configCount = await dbGet('SELECT COUNT(*) AS c FROM salÃ³n_config');
     if (Number(configCount?.c || 0) === 0) {
       const defaultHours = [
         { day: 'Lunes', open: '09:00', close: '19:00', enabled: true },
         { day: 'Martes', open: '09:00', close: '19:00', enabled: true },
-        { day: 'Miércoles', open: '09:00', close: '19:00', enabled: true },
+        { day: 'MiÃ©rcoles', open: '09:00', close: '19:00', enabled: true },
         { day: 'Jueves', open: '09:00', close: '19:00', enabled: true },
         { day: 'Viernes', open: '09:00', close: '19:00', enabled: true },
-        { day: 'Sábado', open: '09:00', close: '13:00', enabled: true },
+        { day: 'SÃ¡bado', open: '09:00', close: '13:00', enabled: true },
         { day: 'Domingo', open: '10:00', close: '14:00', enabled: false }
       ];
       await dbRun(
-        `INSERT INTO salón_config
+        `INSERT INTO salÃ³n_config
          (id, name, description, phone, email, address, hours, logo, coverPhoto,
           primaryColor, accentColor, backgroundColor, whatsapp, calendarPublic,
           workingHours, blockedSlots, vacations, nailShapes, nailLengths, nailStyles, products, updatedAt)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           'main', 'BJ Beauty',
-          'Estética y Bienestar · Diseño y laminado de cejas · Manicura · Pedicura · Tu belleza, nuestra pasión',
+          'EstÃ©tica y Bienestar Â· DiseÃ±o y laminado de cejas Â· Manicura Â· Pedicura Â· Tu belleza, nuestra pasiÃ³n',
           '611296406', '', '',
           '',
           '', '', '#2B0F1E', '#E0407F', '#FDEEF3', '34611296406',
@@ -731,50 +633,16 @@ const initDatabase = async () => {
 /* ==================== CRM ==================== */
 app.get('/api/crm/customers', requireStaff, async (req, res) => {
   try {
-    const appointments = getTable('appointments');
-    const customers = getTable('crm_customers');
+    const appointments = await dbAll('SELECT * FROM appointments');
+    const customers = await dbAll('SELECT * FROM crm_customers');
     for (const appt of appointments) {
-      const phone = String(appt.clientPhone || '').trim();
-      const email = String(appt.clientEmail || '').trim();
-      if (!phone && !email) continue;
-      const existing = customers.find(c =>
-        (phone && c.phone === phone) ||
-        (email && String(c.email || '').toLowerCase() === email.toLowerCase())
-      );
-      if (!existing) {
-        const id = 'legacy_' + crypto.createHash('sha256').update(phone || email).digest('hex').slice(0, 16);
-        const now = new Date().toISOString();
-        customers.push({
-          id,
-          name: appt.clientName || 'Cliente',
-          phone,
-          email,
-          taxId: '',
-          address: '',
-          postalCode: '',
-          city: '',
-          notes: '',
-          createdAt: appt.createdAt || now,
-          updatedAt: now
-        });
-      }
+      const phone=String(appt.clientPhone||'').trim(), email=String(appt.clientEmail||'').trim(); if(!phone&&!email) continue;
+      const exists=customers.some(c=>(phone&&c.phone===phone)||(email&&String(c.email||'').toLowerCase()===email.toLowerCase()));
+      if(!exists){ const id='legacy_'+crypto.createHash('sha256').update(phone||email).digest('hex').slice(0,16), now=new Date().toISOString(); await dbRun('INSERT OR IGNORE INTO crm_customers (id,name,phone,email,taxId,address,postalCode,city,notes,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?)',[id,appt.clientName||'Cliente',phone,email,'','','','','',appt.createdAt||now,now]); customers.push({id,name:appt.clientName||'Cliente',phone,email,taxId:'',address:'',postalCode:'',city:'',notes:'',createdAt:appt.createdAt||now,updatedAt:now}); }
     }
-    const rows = customers.map(c => {
-      const matched = appointments.filter(a =>
-        (c.phone && c.phone === a.clientPhone) ||
-        (c.email && String(c.email).toLowerCase() === String(a.clientEmail || '').toLowerCase())
-      );
-      const dates = matched.map(a => a.date).filter(Boolean).sort();
-      const completedSpend = matched.reduce((sum, a) => sum + (a.status === 'Completada' ? Number(a.totalPrice || 0) : 0), 0);
-      return {
-        ...c,
-        appointmentCount: matched.length,
-        lastAppointment: dates.length ? dates[dates.length - 1] : null,
-        completedSpend
-      };
-    }).sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'es', { sensitivity: 'base' }));
+    const rows=customers.map(c=>{const matched=appointments.filter(a=>(c.phone&&c.phone===a.clientPhone)||(c.email&&String(c.email).toLowerCase()===String(a.clientEmail||'').toLowerCase())); const dates=matched.map(a=>a.date).filter(Boolean).sort(); const completedSpend=matched.reduce((sum,a)=>sum+(a.status==='Completada'?Number(a.totalPrice||0):0),0); return {...c,appointmentCount:matched.length,lastAppointment:dates.length?dates[dates.length-1]:null,completedSpend};}).sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'es',{sensitivity:'base'}));
     res.json(rows);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch(err){res.status(500).json({error:err.message});}
 });
 
 app.post('/api/crm/customers', requireStaff, async (req, res) => {
@@ -805,12 +673,12 @@ app.post('/api/crm/invoices', requireStaff, async (req, res) => {
     const required = ['issuerName','issuerTaxId','issuerAddress','customerName','description'];
     if (required.some(k => !String(b[k] || '').trim())) return res.status(400).json({ error: 'Completa los datos fiscales del emisor, el cliente y el concepto.' });
     const quantity = Number(b.quantity || 1), unitPrice = Number(b.unitPrice), taxRate = Number(b.taxRate);
-    if (!Number.isFinite(quantity) || quantity <= 0 || quantity > 10000 || !Number.isFinite(unitPrice) || unitPrice < 0 || !Number.isFinite(taxRate) || taxRate < 0 || taxRate > 100) return res.status(400).json({ error: 'Cantidad, precio o tipo impositivo no válidos.' });
+    if (!Number.isFinite(quantity) || quantity <= 0 || quantity > 10000 || !Number.isFinite(unitPrice) || unitPrice < 0 || !Number.isFinite(taxRate) || taxRate < 0 || taxRate > 100) return res.status(400).json({ error: 'Cantidad, precio o tipo impositivo no vÃ¡lidos.' });
     const subtotal = Math.round(quantity * unitPrice * 100) / 100;
     const taxAmount = Math.round(subtotal * taxRate) / 100;
     const total = Math.round((subtotal + taxAmount) * 100) / 100;
     const issueDate = String(b.issueDate || new Date().toISOString().slice(0,10));
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(issueDate)) return res.status(400).json({ error: 'Fecha de factura no válida.' });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(issueDate)) return res.status(400).json({ error: 'Fecha de factura no vÃ¡lida.' });
     const year = issueDate.slice(0,4);
     const count = await dbGet('SELECT COUNT(*) AS n FROM crm_invoices WHERE number LIKE ?', [year + '-%']);
     const number = year + '-' + String((count?.n || 0) + 1).padStart(4, '0');
@@ -832,7 +700,7 @@ app.post('/api/crm/invoices', requireStaff, async (req, res) => {
 app.put('/api/crm/invoices/:id/status', requireStaff, async (req, res) => {
   try {
     const status = String(req.body.status || '');
-    if (!['Borrador','Emitida','Cobrada','Anulada'].includes(status)) return res.status(400).json({ error: 'Estado de factura no válido.' });
+    if (!['Borrador','Emitida','Cobrada','Anulada'].includes(status)) return res.status(400).json({ error: 'Estado de factura no vÃ¡lido.' });
     const invoice = await dbGet('SELECT * FROM crm_invoices WHERE id = ?', [req.params.id]);
     if (!invoice) return res.status(404).json({ error: 'Factura no encontrada.' });
     if (invoice.status === 'Anulada') return res.status(409).json({ error: 'Una factura anulada no se puede reactivar.' });
@@ -859,10 +727,10 @@ app.get('/api/appointments', requireStaff, async (req, res) => {
 app.post('/api/appointments', requireStaff, async (req, res) => {
   try {
     const { id, locator, serviceIds, addonIds, specialistId, date, time, totalPrice, totalDuration, clientName, clientPhone, clientEmail, notes } = req.body;
-    
+
     await dbRun(
-      `INSERT INTO appointments 
-       (id, locator, serviceIds, addonIds, specialistId, date, time, totalPrice, totalDuration, clientName, clientPhone, clientEmail, status, notes, createdAt, updatedAt) 
+      `INSERT INTO appointments
+       (id, locator, serviceIds, addonIds, specialistId, date, time, totalPrice, totalDuration, clientName, clientPhone, clientEmail, status, notes, createdAt, updatedAt)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, locator, JSON.stringify(serviceIds), JSON.stringify(addonIds), specialistId, date, time, totalPrice, totalDuration, clientName, clientPhone, clientEmail, 'Confirmada', notes || '', new Date().toISOString(), new Date().toISOString()]
     );
@@ -883,7 +751,7 @@ app.post('/api/appointments', requireStaff, async (req, res) => {
 app.put('/api/appointments/:id', requireStaff, async (req, res) => {
   try {
     const { status, notes } = req.body;
-    
+
     await dbRun(
       'UPDATE appointments SET status = ?, notes = ?, updatedAt = ? WHERE id = ?',
       [status, notes || '', new Date().toISOString(), req.params.id]
@@ -938,7 +806,7 @@ app.get('/api/customer/appointments', customerPortalRateLimit, async (req, res) 
   try {
     const locator = String(req.query.locator || '').trim().toUpperCase();
     const phone = normalizeCustomerPhone(req.query.phone);
-    if (!locator || phone.length < 9) return res.status(400).json({ error: 'Introduce el localizador y el teléfono completo.' });
+    if (!locator || phone.length < 9) return res.status(400).json({ error: 'Introduce el localizador y el telÃ©fono completo.' });
     const appointment = await dbGet('SELECT * FROM appointments WHERE UPPER(locator) = ?', [locator]);
     if (!appointment || normalizeCustomerPhone(appointment.clientPhone) !== phone) return res.status(404).json({ error: 'No encontramos una cita con esos datos.' });
     const requests = await dbAll('SELECT id, status, reason, createdAt, decidedAt, decisionNotes FROM cancellation_requests WHERE appointmentId = ? ORDER BY createdAt DESC', [appointment.id]);
@@ -951,7 +819,7 @@ app.post('/api/customer/appointments/:id/cancellation-requests', customerPortalR
     const locator = String(req.body.locator || '').trim().toUpperCase();
     const phone = normalizeCustomerPhone(req.body.phone);
     const reason = String(req.body.reason || '').trim().slice(0, 500);
-    if (!locator || phone.length < 9) return res.status(400).json({ error: 'Datos de verificación incompletos.' });
+    if (!locator || phone.length < 9) return res.status(400).json({ error: 'Datos de verificaciÃ³n incompletos.' });
     const appointment = await dbGet('SELECT * FROM appointments WHERE id = ? AND UPPER(locator) = ?', [req.params.id, locator]);
     if (!appointment || normalizeCustomerPhone(appointment.clientPhone) !== phone) return res.status(404).json({ error: 'No encontramos esa cita.' });
     if (appointment.status !== 'Confirmada') return res.status(409).json({ error: 'Solo se pueden solicitar cancelaciones de citas confirmadas.' });
@@ -963,43 +831,25 @@ app.post('/api/customer/appointments/:id/cancellation-requests', customerPortalR
   } catch (err) { res.status(500).json({ error: 'No se pudo registrar la solicitud.' }); }
 });
 
-app.get('/api/cancellation-requests', requireStaff, async (req, res) => {
-  try {
-    const requests = getTable('cancellation_requests');
-    const appointments = getTable('appointments');
-    const rows = requests.map(cr => {
-      const a = appointments.find(ap => ap.id === cr.appointmentId);
-      return {
-        ...cr,
-        date: a?.date ?? null,
-        time: a?.time ?? null,
-        appointmentStatus: a?.status ?? null
-      };
-    }).sort((a, b) => {
-      const pa = a.status === 'Pendiente' ? 0 : 1;
-      const pb = b.status === 'Pendiente' ? 0 : 1;
-      if (pa !== pb) return pa - pb;
-      return String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
-    });
-    res.json(rows);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+app.get('/api/cancellation-requests', requireStaff, async (req,res)=>{
+ try { const rows=await dbAll('SELECT cr.*, a.date, a.time, a.status AS appointmentStatus FROM cancellation_requests cr LEFT JOIN appointments a ON a.id = cr.appointmentId ORDER BY CASE WHEN cr.status = "Pendiente" THEN 0 ELSE 1 END, cr.createdAt DESC'); res.json(rows); } catch(err){res.status(500).json({error:err.message});}
 });
 
 app.put('/api/cancellation-requests/:id/decision', requireStaff, async (req, res) => {
   try {
     const decision = String(req.body.decision || '');
     const decisionNotes = String(req.body.decisionNotes || '').trim().slice(0, 500);
-    if (!['Aceptada', 'Rechazada'].includes(decision)) return res.status(400).json({ error: 'Decisión no válida.' });
+    if (!['Aceptada', 'Rechazada'].includes(decision)) return res.status(400).json({ error: 'DecisiÃ³n no vÃ¡lida.' });
     const request = await dbGet('SELECT * FROM cancellation_requests WHERE id = ?', [req.params.id]);
     if (!request) return res.status(404).json({ error: 'Solicitud no encontrada.' });
     if (request.status !== 'Pendiente') return res.status(409).json({ error: 'Esta solicitud ya ha sido resuelta.' });
     const appointment = await dbGet('SELECT * FROM appointments WHERE id = ?', [request.appointmentId]);
     if (!appointment) return res.status(404).json({ error: 'La cita asociada ya no existe.' });
-    if (decision === 'Aceptada' && appointment.status !== 'Confirmada') return res.status(409).json({ error: 'La cita ya no está confirmada.' });
+    if (decision === 'Aceptada' && appointment.status !== 'Confirmada') return res.status(409).json({ error: 'La cita ya no estÃ¡ confirmada.' });
     const now = new Date().toISOString();
     await dbRun('UPDATE cancellation_requests SET status = ?, decidedAt = ?, decisionNotes = ? WHERE id = ?', [decision, now, decisionNotes, request.id]);
     if (decision === 'Aceptada') await dbRun("UPDATE appointments SET status = 'Cancelada', updatedAt = ?, lastActionSource = 'staff-cancellation-request', lastActionAt = ? WHERE id = ?", [now, now, appointment.id]);
-    if (appointment.clientEmail) sendEmail({ to: appointment.clientEmail, subject: decision === 'Aceptada' ? 'Cancelación aceptada · cita ' + appointment.locator : 'Solicitud de cancelación rechazada · cita ' + appointment.locator, templateName: decision === 'Aceptada' ? 'booking-cancelled.html' : 'booking-confirmed.html', vars: { clientName: appointment.clientName, locator: appointment.locator, date: appointment.date, time: appointment.time, decisionNotes } });
+    if (appointment.clientEmail) sendEmail({ to: appointment.clientEmail, subject: decision === 'Aceptada' ? 'CancelaciÃ³n aceptada Â· cita ' + appointment.locator : 'Solicitud de cancelaciÃ³n rechazada Â· cita ' + appointment.locator, templateName: decision === 'Aceptada' ? 'booking-cancelled.html' : 'booking-confirmed.html', vars: { clientName: appointment.clientName, locator: appointment.locator, date: appointment.date, time: appointment.time, decisionNotes } });
     res.json({ success: true, decision, appointmentStatus: decision === 'Aceptada' ? 'Cancelada' : appointment.status });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -1091,7 +941,7 @@ const loadServices = async (ids) => {
 };
 
 const computeSlots = async ({ date, duration, specialistId }) => {
-  const cfg = await dbGet("SELECT workingHours, blockedSlots, vacations, calendarPublic FROM salón_config WHERE id = 'main'");
+  const cfg = await dbGet("SELECT workingHours, blockedSlots, vacations, calendarPublic FROM salÃ³n_config WHERE id = 'main'");
   const working = parseJson(cfg && cfg.workingHours, []);
   const blocked = parseJson(cfg && cfg.blockedSlots, []);
   const vacations = parseJson(cfg && cfg.vacations, []);
@@ -1134,7 +984,7 @@ app.get('/api/integrations/n8n/catalog', n8nApiGuard, async (req, res) => {
   try {
     const services = (await dbAll('SELECT * FROM services WHERE active = 1 ORDER BY sortOrder ASC, name ASC')).map(s => ({ id: s.id, name: s.name, category: s.category || '', description: s.description || s.shortDescription || '', shortDescription: s.shortDescription || s.description || '', duration: s.duration == null ? null : Number(s.duration), durationMinutes: s.duration == null ? 0 : Number(s.duration), price: s.price == null ? null : Number(s.price) }));
     const specialists = (await dbAll('SELECT id, name, role FROM specialists WHERE active = 1')).filter(s => s.id !== 'any').map(s => ({ id: s.id, name: s.name, role: s.role || '' }));
-    const cfg = await dbGet("SELECT name, phone, whatsapp, address, hours, workingHours FROM salón_config WHERE id = 'main'");
+    const cfg = await dbGet("SELECT name, phone, whatsapp, address, hours, workingHours FROM salÃ³n_config WHERE id = 'main'");
     res.json({ success: true, salon: cfg ? { name: cfg.name, phone: cfg.phone, whatsapp: cfg.whatsapp, address: cfg.address, hours: cfg.hours, workingHours: parseJson(cfg.workingHours, []) } : null, currency: 'EUR', services, specialists });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -1209,10 +1059,10 @@ app.get('/api/designs', requireStaff, async (req, res) => {
 app.post('/api/designs', async (req, res) => {
   try {
     const { id, code, clientName, clientPhone, clientEmail, shape, notes, imageBase64 } = req.body;
-    
+
     await dbRun(
-      `INSERT INTO custom_designs 
-       (id, code, clientName, clientPhone, clientEmail, shape, notes, imageBase64, status, createdAt, updatedAt) 
+      `INSERT INTO custom_designs
+       (id, code, clientName, clientPhone, clientEmail, shape, notes, imageBase64, status, createdAt, updatedAt)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, code, clientName, clientPhone, clientEmail, shape, notes, imageBase64, 'Pendiente', new Date().toISOString(), new Date().toISOString()]
     );
@@ -1226,7 +1076,7 @@ app.post('/api/designs', async (req, res) => {
 app.put('/api/designs/:id', requireStaff, async (req, res) => {
   try {
     const { status } = req.body;
-    
+
     await dbRun(
       'UPDATE custom_designs SET status = ?, updatedAt = ? WHERE id = ?',
       [status, new Date().toISOString(), req.params.id]
@@ -1250,7 +1100,7 @@ app.delete('/api/designs/:id', requireStaff, async (req, res) => {
 // CONFIGURACIN
 app.get('/api/config', async (req, res) => {
   try {
-    const config = await dbGet('SELECT * FROM salón_config WHERE id = ?', ['main']);
+    const config = await dbGet('SELECT * FROM salÃ³n_config WHERE id = ?', ['main']);
     res.json(config || {});
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1259,54 +1109,16 @@ app.get('/api/config', async (req, res) => {
 
 app.put('/api/config', requireStaff, async (req, res) => {
   try {
-    const {
-      name, description, phone, email, address, hours, logo, coverPhoto,
-      primaryColor, accentColor, backgroundColor, whatsapp, calendarPublic,
-      workingHours, blockedSlots, vacations, nailShapes, nailLengths,
-      nailStyles, products
-    } = req.body;
-
-    const existing = await dbGet('SELECT id FROM salón_config WHERE id = ?', ['main']);
-    const values = [
-      name, description, phone, email, address, hours, logo, coverPhoto,
-      primaryColor, accentColor, backgroundColor, whatsapp,
-      calendarPublic === undefined ? 1 : (calendarPublic ? 1 : 0),
-      JSON.stringify(workingHours ?? []),
-      JSON.stringify(blockedSlots ?? []),
-      JSON.stringify(vacations ?? []),
-      JSON.stringify(nailShapes ?? []),
-      JSON.stringify(nailLengths ?? []),
-      JSON.stringify(nailStyles ?? []),
-      JSON.stringify(products ?? []),
-      new Date().toISOString()
-    ];
-
+    const { name, description, phone, email, address, hours, logo, coverPhoto, primaryColor, accentColor, backgroundColor, whatsapp, calendarPublic, workingHours, blockedSlots, vacations, nailShapes, nailLengths, nailStyles, products, legalTitular, legalNif, legalAddress, legalEmail, legalPhone, legalRegistry, legalCustomNotice, privacyCustomText, cookiesCustomText } = req.body;
+    const existing = await dbGet('SELECT id FROM salÃ³n_config WHERE id = ?', ['main']);
+    const values = [name, description, phone, email, address, hours, logo, coverPhoto, primaryColor, accentColor, backgroundColor, whatsapp, calendarPublic === undefined ? 1 : (calendarPublic ? 1 : 0), JSON.stringify(workingHours ?? []), JSON.stringify(blockedSlots ?? []), JSON.stringify(vacations ?? []), JSON.stringify(nailShapes ?? []), JSON.stringify(nailLengths ?? []), JSON.stringify(nailStyles ?? []), JSON.stringify(products ?? []), legalTitular ?? '', legalNif ?? '', legalAddress ?? '', legalEmail ?? '', legalPhone ?? '', legalRegistry ?? '', legalCustomNotice ?? '', privacyCustomText ?? '', cookiesCustomText ?? '', new Date().toISOString()];
     if (existing) {
-      await dbRun(
-        `UPDATE salón_config
-         SET name = ?, description = ?, phone = ?, email = ?, address = ?, hours = ?,
-             logo = ?, coverPhoto = ?, primaryColor = ?, accentColor = ?, backgroundColor = ?,
-             whatsapp = ?, calendarPublic = ?, workingHours = ?, blockedSlots = ?, vacations = ?,
-             nailShapes = ?, nailLengths = ?, nailStyles = ?, products = ?, updatedAt = ?
-         WHERE id = ?`,
-        [...values, 'main']
-      );
+      await dbRun('UPDATE salÃ³n_config SET name=?, description=?, phone=?, email=?, address=?, hours=?, logo=?, coverPhoto=?, primaryColor=?, accentColor=?, backgroundColor=?, whatsapp=?, calendarPublic=?, workingHours=?, blockedSlots=?, vacations=?, nailShapes=?, nailLengths=?, nailStyles=?, products=?, legalTitular=?, legalNif=?, legalAddress=?, legalEmail=?, legalPhone=?, legalRegistry=?, legalCustomNotice=?, privacyCustomText=?, cookiesCustomText=?, updatedAt=? WHERE id=?', [...values, 'main']);
     } else {
-      await dbRun(
-        `INSERT INTO salón_config
-         (id, name, description, phone, email, address, hours, logo, coverPhoto,
-          primaryColor, accentColor, backgroundColor, whatsapp, calendarPublic,
-          workingHours, blockedSlots, vacations, nailShapes, nailLengths, nailStyles, products, updatedAt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ['main', ...values]
-      );
+      await dbRun('INSERT INTO salÃ³n_config (id,name,description,phone,email,address,hours,logo,coverPhoto,primaryColor,accentColor,backgroundColor,whatsapp,calendarPublic,workingHours,blockedSlots,vacations,nailShapes,nailLengths,nailStyles,products,legalTitular,legalNif,legalAddress,legalEmail,legalPhone,legalRegistry,legalCustomNotice,privacyCustomText,cookiesCustomText,updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', ['main', ...values]);
     }
-
     res.json({ success: true });
-  } catch (err) {
-    console.error('Error guardando configuración:', err);
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { console.error('Error guardando configuraciÃ³n:', err); res.status(500).json({ error: err.message }); }
 });
 
 // SERVICIOS
@@ -1370,7 +1182,7 @@ app.get('/api/specialists', async (req, res) => {
 app.post('/api/specialists', requireStaff, async (req, res) => {
   try {
     const { id, name, role, photo, description } = req.body;
-    
+
     await dbRun(
       'INSERT INTO specialists (id, name, role, photo, description, active) VALUES (?, ?, ?, ?, ?, 1)',
       [id, name, role, photo, description || '']
@@ -1385,7 +1197,7 @@ app.post('/api/specialists', requireStaff, async (req, res) => {
 app.put('/api/specialists/:id', requireStaff, async (req, res) => {
   try {
     const { name, role, photo, description } = req.body;
-    
+
     await dbRun(
       'UPDATE specialists SET name = ?, role = ?, photo = ?, description = ? WHERE id = ?',
       [name, role, photo, description || '', req.params.id]
@@ -1412,7 +1224,7 @@ app.get('/api/public/content-feed', async (req, res) => {
   try {
     const providedKey = req.header('x-api-key');
     if (process.env.CONTENT_FEED_API_KEY && providedKey !== process.env.CONTENT_FEED_API_KEY) {
-      return res.status(401).json({ error: 'API key inválida' });
+      return res.status(401).json({ error: 'API key invÃ¡lida' });
     }
     const photos = await dbAll('SELECT * FROM gallery ORDER BY displayOrder ASC, uploadedAt DESC');
     const baseUrl = `${req.protocol}://${req.get('host')}`;
@@ -1421,7 +1233,7 @@ app.get('/api/public/content-feed', async (req, res) => {
       type: 'gallery_photo',
       imageUrl: `${baseUrl}/api/gallery/${p.id}/image`,
       title: p.title || '',
-      context: p.caption || 'Foto de la galería del salón',
+      context: p.caption || 'Foto de la galerÃ­a del salÃ³n',
       createdAt: p.uploadedAt,
       consent: true
     }));
@@ -1432,7 +1244,7 @@ app.get('/api/public/content-feed', async (req, res) => {
 });
 
 // Sirve la foto de galera como imagen real (necesario para que Instagram/el
-// servicio externo puedan descargarla por URL pública, no vale el base64)
+// servicio externo puedan descargarla por URL pÃºblica, no vale el base64)
 app.get('/api/gallery/:id/image', async (req, res) => {
   try {
     const photo = await dbGet('SELECT photoBase64 FROM gallery WHERE id = ?', [req.params.id]);
@@ -1463,7 +1275,7 @@ app.post('/api/gallery', requireStaff, async (req, res) => {
     const { id, photoBase64, title, caption } = req.body;
     const order = await dbGet('SELECT MAX(displayOrder) as max FROM gallery');
     const displayOrder = (order?.max || 0) + 1;
-    
+
     await dbRun(
       'INSERT INTO gallery (id, photoBase64, title, caption, uploadedAt, displayOrder) VALUES (?, ?, ?, ?, ?, ?)',
       [id, photoBase64, title || '', caption || '', new Date().toISOString(), displayOrder]
@@ -1488,13 +1300,14 @@ app.delete('/api/gallery/:id', requireStaff, async (req, res) => {
 app.post('/api/booking-request', async (req, res) => {
   try {
     const { clientName, clientPhone, clientEmail, serviceType, preferredDate, preferredTime, notes, createdAt } = req.body;
+    if (req.body.privacyAccepted !== true) return res.status(400).json({ error: 'Es necesario aceptar la polÃ­tica de privacidad.' });
     const id = Date.now().toString();
-    
+
     await dbRun(
-      `INSERT INTO booking_requests 
-       (id, clientName, clientPhone, clientEmail, serviceType, preferredDate, preferredTime, notes, status, createdAt) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, clientName, clientPhone, clientEmail, serviceType, preferredDate, preferredTime, notes, 'Pendiente', createdAt]
+      `INSERT INTO booking_requests
+       (id, clientName, clientPhone, clientEmail, serviceType, preferredDate, preferredTime, notes, status, createdAt, privacyAcceptedAt, privacyPolicyVersion)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, clientName, clientPhone, clientEmail, serviceType, preferredDate, preferredTime, notes, 'Pendiente', createdAt || new Date().toISOString(), new Date().toISOString(), String(req.body.privacyPolicyVersion || '2026-11-27')]
     );
 
     const requestEmailVars = {
@@ -1547,7 +1360,7 @@ app.get('/api/booking-requests', requireStaff, async (req, res) => {
 app.put('/api/booking-requests/:id', requireStaff, async (req, res) => {
   try {
     const { status } = req.body;
-    
+
     await dbRun(
       'UPDATE booking_requests SET status = ?, respondedAt = ? WHERE id = ?',
       [status, new Date().toISOString(), req.params.id]
@@ -1590,8 +1403,6 @@ initDatabase().then(() => {
   app.listen(PORT, HOST, () => {
     console.log(`Servidor Express en http://${HOST}:${PORT}`);
     console.log(`API Base: http://localhost:${PORT}/api`);
-    console.log('Base de datos: en memoria (sqlite3 mock activo)');
+    console.log('Base de datos SQLite persistente:', dbPath);
   });
 });
-
-

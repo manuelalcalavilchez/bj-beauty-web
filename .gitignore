@@ -21,3 +21,7 @@ cdp.json
 checkws.cjs
 checkbrowser.cjs
 newtab.json
+
+*.db
+*.sqlite
+*.sqlite3

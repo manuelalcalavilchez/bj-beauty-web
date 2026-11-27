@@ -79,6 +79,8 @@ interface SalonConfig {
   nailLengths: string[];
   nailStyles: string[];
   products: string[];
+  legalTitular: string; legalNif: string; legalAddress: string; legalEmail: string; legalPhone: string;
+  legalRegistry: string; legalCustomNotice: string; privacyCustomText: string; cookiesCustomText: string;
   colors: {
     primary: string;
     accent: string;
@@ -124,6 +126,7 @@ const DEFAULT_CONFIG: SalonConfig = {
   nailLengths: [],
   nailStyles: [],
   products: [],
+  legalTitular: '', legalNif: '', legalAddress: '', legalEmail: '', legalPhone: '', legalRegistry: '', legalCustomNotice: '', privacyCustomText: '', cookiesCustomText: '',
   colors: {
     primary: '#2B0F1E',
     accent: '#E0407F',
@@ -855,6 +858,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   </div>
                 </div>
 
+                <div className="pt-6 border-t border-neutral-200 space-y-4">
+                  <h3 className="text-sm font-bold text-[#2B0F1E]">Datos legales y privacidad</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <label className="text-xs font-semibold">Titular / razón social<input value={editingConfig.legalTitular} onChange={e=>setEditingConfig({...editingConfig,legalTitular:e.target.value})} className="mt-1 w-full px-3 py-2 border rounded-lg" /></label>
+                    <label className="text-xs font-semibold">NIF / CIF<input value={editingConfig.legalNif} onChange={e=>setEditingConfig({...editingConfig,legalNif:e.target.value})} className="mt-1 w-full px-3 py-2 border rounded-lg" /></label>
+                    <label className="text-xs font-semibold">Domicilio<input value={editingConfig.legalAddress} onChange={e=>setEditingConfig({...editingConfig,legalAddress:e.target.value})} className="mt-1 w-full px-3 py-2 border rounded-lg" /></label>
+                    <label className="text-xs font-semibold">Correo de contacto<input value={editingConfig.legalEmail} onChange={e=>setEditingConfig({...editingConfig,legalEmail:e.target.value})} className="mt-1 w-full px-3 py-2 border rounded-lg" /></label>
+                    <label className="text-xs font-semibold">Teléfono<input value={editingConfig.legalPhone} onChange={e=>setEditingConfig({...editingConfig,legalPhone:e.target.value})} className="mt-1 w-full px-3 py-2 border rounded-lg" /></label>
+                    <label className="text-xs font-semibold">Datos registrales<input value={editingConfig.legalRegistry} onChange={e=>setEditingConfig({...editingConfig,legalRegistry:e.target.value})} className="mt-1 w-full px-3 py-2 border rounded-lg" /></label>
+                  </div>
+                  <label className="block text-xs font-semibold">Aviso legal adicional<textarea value={editingConfig.legalCustomNotice} onChange={e=>setEditingConfig({...editingConfig,legalCustomNotice:e.target.value})} rows={3} className="mt-1 w-full px-3 py-2 border rounded-lg" /></label>
+                  <label className="block text-xs font-semibold">Información adicional de privacidad<textarea value={editingConfig.privacyCustomText} onChange={e=>setEditingConfig({...editingConfig,privacyCustomText:e.target.value})} rows={3} className="mt-1 w-full px-3 py-2 border rounded-lg" /></label>
+                  <label className="block text-xs font-semibold">Información adicional de cookies<textarea value={editingConfig.cookiesCustomText} onChange={e=>setEditingConfig({...editingConfig,cookiesCustomText:e.target.value})} rows={3} className="mt-1 w-full px-3 py-2 border rounded-lg" /></label>
+                </div>
                 <div className="pt-6 border-t border-neutral-200">
                   <button
                     onClick={async () => {
