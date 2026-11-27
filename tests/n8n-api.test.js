@@ -19,6 +19,7 @@ let tempDir;
 let dbPath;
 let db;
 let server;
+const serverOutput = [];
 
 const dbRun = (database, sql, params = []) => new Promise((resolve, reject) => {
   database.run(sql, params, function (error) {
@@ -66,8 +67,10 @@ before(async () => {
       SMTP_USER: '',
       SMTP_PASS: ''
     },
-    stdio: 'ignore'
+    stdio: ['ignore', 'pipe', 'pipe']
   });
+  server.stdout.on('data', chunk => serverOutput.push(String(chunk)));
+  server.stderr.on('data', chunk => serverOutput.push(String(chunk)));
 
   let ready = false;
   for (let attempt = 0; attempt < 80; attempt++) {
@@ -77,7 +80,7 @@ before(async () => {
     } catch { /* server is still starting */ }
     await delay(100);
   }
-  if (!ready) throw new Error('BJ Beauty test server did not become ready');
+  if (!ready) throw new Error('BJ Beauty test server did not become ready. Output: ' + serverOutput.join('').slice(-5000));
 
   db = new sqlite3.Database(dbPath);
   const salonName = 'sal' + String.fromCharCode(0x00f3) + 'n_config';
