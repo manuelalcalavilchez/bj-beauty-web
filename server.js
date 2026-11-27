@@ -1098,12 +1098,38 @@ app.delete('/api/designs/:id', requireStaff, async (req, res) => {
 });
 
 // CONFIGURACIN
+// Solo se exponen los campos necesarios para la web pública y sus textos legales.
+const PUBLIC_CONFIG_FIELDS = [
+  'name', 'description', 'phone', 'email', 'address', 'hours', 'logo', 'coverPhoto',
+  'primaryColor', 'accentColor', 'backgroundColor', 'whatsapp',
+  'legalTitular', 'legalNif', 'legalAddress', 'legalEmail', 'legalPhone', 'legalRegistry',
+  'legalCustomNotice', 'privacyCustomText', 'cookiesCustomText'
+];
+
 app.get('/api/config', async (req, res) => {
   try {
     const config = await dbGet('SELECT * FROM salÃ³n_config WHERE id = ?', ['main']);
+    if (!config) return res.json({});
+    const publicConfig = Object.fromEntries(
+      PUBLIC_CONFIG_FIELDS.filter((field) => config[field] !== undefined).map((field) => [field, config[field]])
+    );
+    res.set('Cache-Control', 'public, max-age=60');
+    res.json(publicConfig);
+  } catch (err) {
+    console.error('Error leyendo configuración pública:', err);
+    res.status(500).json({ error: 'No se pudo cargar la configuración.' });
+  }
+});
+
+// La configuración operativa completa solo está disponible para una sesión Staff válida.
+app.get('/api/staff/config', requireStaff, async (req, res) => {
+  try {
+    const config = await dbGet('SELECT * FROM salÃ³n_config WHERE id = ?', ['main']);
+    res.set('Cache-Control', 'no-store');
     res.json(config || {});
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Error leyendo configuración Staff:', err);
+    res.status(500).json({ error: 'No se pudo cargar la configuración.' });
   }
 });
 
@@ -1296,25 +1322,69 @@ app.delete('/api/gallery/:id', requireStaff, async (req, res) => {
   }
 });
 
-// SOLICITUDES DE CITA
-app.post('/api/booking-request', async (req, res) => {
+// SOLICITUDES DE CITA PÚBLICAS
+const bookingRequestAttempts = new Map();
+const bookingRequestRateLimit = (req, res, next) => {
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  const current = bookingRequestAttempts.get(ip);
+  if (!current || now - current.startedAt > 15 * 60 * 1000) {
+    bookingRequestAttempts.set(ip, { startedAt: now, count: 1 });
+    return next();
+  }
+  if (current.count >= 5) {
+    const retryAfter = Math.ceil((15 * 60 * 1000 - (now - current.startedAt)) / 1000);
+    res.set('Retry-After', String(retryAfter));
+    return res.status(429).json({ error: 'Has enviado varias solicitudes. Espera unos minutos antes de volver a intentarlo.' });
+  }
+  current.count += 1;
+  next();
+};
+
+app.post('/api/booking-request', bookingRequestRateLimit, async (req, res) => {
   try {
-    const { clientName, clientPhone, clientEmail, serviceType, preferredDate, preferredTime, notes, createdAt } = req.body;
-    if (req.body.privacyAccepted !== true) return res.status(400).json({ error: 'Es necesario aceptar la polÃ­tica de privacidad.' });
-    const id = Date.now().toString();
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const clientName = String(body.clientName || '').trim();
+    const clientPhone = String(body.clientPhone || '').trim();
+    const clientEmail = String(body.clientEmail || '').trim().toLowerCase();
+    const serviceType = String(body.serviceType || '').trim();
+    const preferredDate = String(body.preferredDate || '').trim();
+    const preferredTime = String(body.preferredTime || '').trim();
+    const notes = String(body.notes || '').trim();
+    const phoneDigits = clientPhone.replace(/\D/g, '');
+
+    if (body.privacyAccepted !== true) {
+      return res.status(400).json({ error: 'Es necesario aceptar la política de privacidad.' });
+    }
+    if (clientName.length < 2 || clientName.length > 120) {
+      return res.status(400).json({ error: 'Introduce un nombre válido (máximo 120 caracteres).' });
+    }
+    if (phoneDigits.length < 9 || phoneDigits.length > 15) {
+      return res.status(400).json({ error: 'Introduce un teléfono válido.' });
+    }
+    if (clientEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clientEmail)) {
+      return res.status(400).json({ error: 'Introduce un correo electrónico válido.' });
+    }
+    if (!serviceType || serviceType.length > 120 || preferredDate.length > 10 || preferredTime.length > 30 || notes.length > 1000) {
+      return res.status(400).json({ error: 'Revisa el servicio, la fecha, la hora y las notas (máximo 1.000 caracteres).' });
+    }
+
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const privacyPolicyVersion = String(body.privacyPolicyVersion || '2026-11-27').slice(0, 40);
 
     await dbRun(
       `INSERT INTO booking_requests
        (id, clientName, clientPhone, clientEmail, serviceType, preferredDate, preferredTime, notes, status, createdAt, privacyAcceptedAt, privacyPolicyVersion)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, clientName, clientPhone, clientEmail, serviceType, preferredDate, preferredTime, notes, 'Pendiente', createdAt || new Date().toISOString(), new Date().toISOString(), String(req.body.privacyPolicyVersion || '2026-11-27')]
+      [id, clientName, clientPhone, clientEmail, serviceType, preferredDate, preferredTime, notes, 'Pendiente', now, now, privacyPolicyVersion]
     );
 
     const requestEmailVars = {
-      clientName: clientName || 'Cliente',
-      clientPhone: clientPhone || 'No indicado',
-      clientEmail: clientEmail || 'No indicado',
-      serviceType: serviceType || 'tu servicio',
+      clientName,
+      clientPhone,
+      clientEmail,
+      serviceType,
       preferredDate: preferredDate || 'a confirmar',
       preferredTime: preferredTime || 'a confirmar',
       notes: notes || 'Sin comentarios',
@@ -1331,7 +1401,7 @@ app.post('/api/booking-request', async (req, res) => {
       }),
       sendEmail({
         to: salonNotificationEmail,
-        subject: `Nueva solicitud de cita - ${clientName || 'Cliente'}`,
+        subject: `Nueva solicitud de cita - ${clientName}`,
         templateName: 'booking-request-owner.html',
         vars: requestEmailVars
       })
@@ -1342,9 +1412,10 @@ app.post('/api/booking-request', async (req, res) => {
       salonRecipient: salonNotificationEmail
     }));
 
-    res.json({ success: true, id });
+    res.status(201).json({ success: true, id });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Error guardando solicitud de cita:', err);
+    res.status(500).json({ error: 'No se pudo enviar la solicitud. Inténtalo de nuevo más tarde.' });
   }
 });
 
