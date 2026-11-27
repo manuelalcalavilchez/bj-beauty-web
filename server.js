@@ -49,12 +49,17 @@ if (process.env.SMTP_USER && process.env.SMTP_PASS) {
   console.warn('a?  SMTP no configurado en .env (SMTP_USER/SMTP_PASS). Los emails solo se mostrarn en consola.');
 }
 
-// Sustituye {{variable}} en la plantilla HTML por su valor
+// Escapa valores dinámicos antes de insertarlos en plantillas HTML de correo.
+const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+})[char]);
+
+// Sustituye {{variable}} en la plantilla HTML por su valor escapado.
 const renderTemplate = (templateName, vars = {}) => {
   const templatePath = path.join(TEMPLATES_DIR, templateName);
   let html = fs.readFileSync(templatePath, 'utf-8');
   for (const [key, value] of Object.entries(vars)) {
-    html = html.replaceAll(`{{${key}}}`, value === undefined || value === null ? '' : String(value));
+    html = html.replaceAll(`{{${key}}}`, escapeHtml(value));
   }
   return html;
 };
@@ -234,6 +239,9 @@ setInterval(() => {
   for (const [jti, exp] of revokedStaffTokens) if (exp < now) revokedStaffTokens.delete(jti);
   for (const [ip, a] of staffLoginAttempts) {
     if ((a.lockedUntil || 0) < now && now - a.firstAt > LOGIN_WINDOW_MS) staffLoginAttempts.delete(ip);
+  }
+  for (const [ip, a] of bookingRequestAttempts) {
+    if (now - a.startedAt > 30 * 60 * 1000) bookingRequestAttempts.delete(ip);
   }
 }, 10 * 60 * 1000).unref();
 
@@ -1248,9 +1256,15 @@ app.delete('/api/specialists/:id', requireStaff, async (req, res) => {
 // Ver I:\instagram-autopilot\INTEGRATION.md para el contrato de este endpoint.
 app.get('/api/public/content-feed', async (req, res) => {
   try {
-    const providedKey = req.header('x-api-key');
-    if (process.env.CONTENT_FEED_API_KEY && providedKey !== process.env.CONTENT_FEED_API_KEY) {
-      return res.status(401).json({ error: 'API key invÃ¡lida' });
+    const configuredKey = process.env.CONTENT_FEED_API_KEY || '';
+    const providedKey = req.header('x-api-key') || '';
+    if (!configuredKey) {
+      return res.status(503).json({ error: 'El acceso al feed no está configurado en el servidor.' });
+    }
+    const expected = Buffer.from(configuredKey);
+    const provided = Buffer.from(providedKey);
+    if (expected.length !== provided.length || !crypto.timingSafeEqual(expected, provided)) {
+      return res.status(401).json({ error: 'API key inválida' });
     }
     const photos = await dbAll('SELECT * FROM gallery ORDER BY displayOrder ASC, uploadedAt DESC');
     const baseUrl = `${req.protocol}://${req.get('host')}`;
