@@ -290,9 +290,19 @@ export const apiService = {
   async getConfig() {
     try {
       const res = await apiFetch(`${API_BASE}/config`);
-      return res.json();
+      return res.ok ? await res.json() : {};
     } catch (err) {
-      console.error('Error fetching config:', err);
+      console.error('Error fetching public config:', err);
+      return {};
+    }
+  },
+
+  async getStaffConfig() {
+    try {
+      const res = await apiFetch(`${API_BASE}/staff/config`);
+      return res.ok ? await res.json() : {};
+    } catch (err) {
+      console.error('Error fetching Staff config:', err);
       return {};
     }
   },
