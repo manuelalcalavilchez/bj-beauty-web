@@ -45,7 +45,10 @@ before(async () => {
   const legacyName = 'sal' + String.fromCharCode(0x00c3, 0x00b3) + 'n_config';
   const setupDb = new sqlite3.Database(dbPath);
   await dbRun(setupDb, `CREATE TABLE "${legacyName}" (
-    id TEXT PRIMARY KEY, calendarPublic INTEGER, workingHours TEXT, blockedSlots TEXT, vacations TEXT
+    id TEXT PRIMARY KEY, name TEXT, description TEXT, phone TEXT, email TEXT, address TEXT, hours TEXT,
+    logo TEXT, coverPhoto TEXT, primaryColor TEXT, accentColor TEXT, backgroundColor TEXT, whatsapp TEXT,
+    calendarPublic INTEGER, workingHours TEXT, blockedSlots TEXT, vacations TEXT, nailShapes TEXT,
+    nailLengths TEXT, nailStyles TEXT, products TEXT, updatedAt TEXT
   )`);
   await dbRun(setupDb,
     `INSERT INTO "${legacyName}" (id, calendarPublic, workingHours, blockedSlots, vacations)
